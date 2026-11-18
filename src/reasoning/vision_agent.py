@@ -50,14 +50,15 @@ class VisionAgent:
         except Exception:
             send_frame = primary_frame
 
-        prompt = """You are an expert gaming video editor analyzing GTA VI and GTA V gameplay frames.
+        prompt = """You are an expert short-form video editor analyzing gameplay from an unspecified video game.
+Identify only events and interface elements that are visible. Do not assume the game title or invent action.
 Look closely at the provided screenshot and return a strictly formatted JSON object with these keys:
 {
   "has_webcam": boolean (true if creator facecam box is visible on screen),
   "webcam_position": string ("top_left", "top_right", "bottom_left", "bottom_right", or "none"),
   "streamer_reaction": string ("laughing", "screaming", "shocked", "neutral"),
-  "wanted_level_stars": integer (0 to 5, look at the top right mini-map area for police stars),
-  "gameplay_tags": array of strings (e.g. ["police_chase", "car_crash", "explosion", "shootout", "stunt", "heist"]),
+  "wanted_level_stars": integer (0 to 5 when a GTA wanted-level indicator is visible, otherwise 0),
+  "gameplay_tags": array of short factual strings (e.g. ["chase", "crash", "explosion", "combat", "stunt", "goal_scored"]),
   "action_intensity": integer (0 to 100 representing how intense the visual action is),
   "summary": string (a concise 1-sentence description of the visual scene)
 }
@@ -81,7 +82,7 @@ Return ONLY valid JSON.
         except Exception as e:
             logger.error("Vision agent analysis failed: %s. Falling back to default tags.", e)
             return VisualTags(
-                gameplay_tags=["gta_action"],
+                gameplay_tags=["gameplay_action"],
                 action_intensity=60,
                 summary="Fallback visual tags due to inference failure.",
             )

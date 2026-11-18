@@ -25,7 +25,7 @@ class RankedClipSpec(BaseModel):
     action_score: int = Field(description="Gameplay intensity rating from 0 to 100")
     layout_mode: str = Field(default="stacked", description="stacked, action_crop, or blurred_pillar")
     subtitle_style: str = Field(default="neon_yellow_bounce", description="Subtitle animation style")
-    call_to_action: str = Field(default="Drop a like and follow for more GTA chaos!", description="Ending CTA")
+    call_to_action: str = Field(default="Follow for more gaming moments!", description="Ending CTA")
 
 
 class NarrativeAgent:
@@ -44,8 +44,8 @@ class NarrativeAgent:
         creator_handle: str = "@Creator",
     ) -> RankedClipSpec:
         """Score candidate highlight and generate viral hooks with Qwen3:8B."""
-        prompt = f"""You are the lead short-form video producer for a viral GTA gaming channel.
-Evaluate this candidate moment and generate a viral vertical clip specification.
+        prompt = f"""You are a short-form video producer for a gaming creator.
+Evaluate this gameplay moment and generate an engaging vertical clip specification.
 
 CONTEXT:
 Creator: {creator_handle}
@@ -61,7 +61,7 @@ Dialogue / Transcript:
 INSTRUCTIONS:
 1. Determine optimal trim: Trim dead air at the beginning and snap tightly to the setup, climax, and funny punchline. Start must be >= {candidate.start_time:.1f} and end <= {candidate.end_time:.1f}. Duration should ideally be between 25s and 60s.
 2. Craft a viral Title (high click-through rate, curiosity inducing, e.g. "When a 5-Star Wanted Level Goes Completely Wrong").
-3. Craft a 3-6 word viral Hook Text to display on screen during the first 3 seconds to maximize 3-second viewer retention (e.g. "HE DID NOT SEE THAT COMING 💀").
+3. Craft a 3-6 word Hook Text to display on screen during the first 3 seconds (e.g. "DID NOT SEE THAT COMING 💀").
 4. Choose layout mode:
    - "stacked" if has_webcam is true (facecam top, gameplay bottom).
    - "action_crop" if no webcam and centered action.
@@ -103,7 +103,7 @@ Return ONLY a valid JSON object matching this schema:
 
             clip_spec = RankedClipSpec(
                 candidate_id=candidate.candidate_id,
-                title=res.get("title", f"Insane GTA Moment - {candidate.candidate_id}"),
+                title=res.get("title", f"Gaming highlight - {candidate.candidate_id}"),
                 hook_text=res.get("hook_text", "WAIT FOR IT... 💀"),
                 optimal_start=round(opt_start, 2),
                 optimal_end=round(opt_end, 2),
@@ -113,7 +113,7 @@ Return ONLY a valid JSON object matching this schema:
                 action_score=int(res.get("action_score", 85)),
                 layout_mode=res.get("layout_mode", "stacked" if visual_tags.has_webcam else "action_crop"),
                 subtitle_style=res.get("subtitle_style", "neon_yellow_bounce"),
-                call_to_action=res.get("call_to_action", "Follow for more GTA clips!"),
+                call_to_action=res.get("call_to_action", "Follow for more gaming moments!"),
             )
             logger.info(
                 "Candidate %s scored! Virality: %d | Title: '%s'",
@@ -127,7 +127,7 @@ Return ONLY a valid JSON object matching this schema:
             logger.error("Narrative reasoning failed: %s. Generating heuristic fallback spec.", e)
             return RankedClipSpec(
                 candidate_id=candidate.candidate_id,
-                title=f"Crazy GTA Moment #{candidate.candidate_id}",
+                title=f"Gaming highlight #{candidate.candidate_id}",
                 hook_text="HE COULD NOT BELIEVE THIS 💀",
                 optimal_start=candidate.start_time,
                 optimal_end=candidate.end_time,
@@ -137,5 +137,5 @@ Return ONLY a valid JSON object matching this schema:
                 action_score=80,
                 layout_mode="stacked" if visual_tags.has_webcam else "action_crop",
                 subtitle_style="neon_yellow_bounce",
-                call_to_action="Follow for daily GTA moments!",
+                call_to_action="Follow for more gaming moments!",
             )

@@ -36,7 +36,7 @@ class SubtitleBuilder:
         # Define ASS header and styles
         ass_lines = [
             "[Script Info]",
-            "Title: GTA CLIP COMMAND AutoSub",
+            "Title: Gaming Clip AutoSub",
             "ScriptType: v4.00+",
             f"PlayResX: {self.target_width}",
             f"PlayResY: {self.target_height}",

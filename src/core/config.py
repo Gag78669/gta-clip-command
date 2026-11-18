@@ -1,6 +1,5 @@
 """System configuration and hardware parameters for GTA CLIP COMMAND."""
 
-import os
 from pathlib import Path
 from functools import lru_cache
 from pydantic import Field
@@ -45,12 +44,8 @@ class Settings(BaseSettings):
     )
 
     # FFmpeg Toolchain
-    ffmpeg_bin: str = Field(
-        default=r"C:\Users\Gagan\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin\ffmpeg.exe"
-    )
-    ffprobe_bin: str = Field(
-        default=r"C:\Users\Gagan\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.2-full_build\bin\ffprobe.exe"
-    )
+    ffmpeg_bin: str = "ffmpeg"
+    ffprobe_bin: str = "ffprobe"
 
     # Ollama Local LLM Configuration
     ollama_base_url: str = "http://127.0.0.1:11434"

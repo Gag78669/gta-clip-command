@@ -251,7 +251,7 @@ def audit_ollama_hardware_lifecycle():
         audio_peak_dbfs=-3.2,
         scene_cut_count=5,
         speech_density=1.8,
-        dialogue_excerpt="Lester: Look at that cop car coming right at us! Hit the gas!",
+        dialogue_excerpt="That turn came out of nowhere! Keep going!",
     )
 
     t1 = time.time()
@@ -259,7 +259,7 @@ def audit_ollama_hardware_lifecycle():
     reasoning_spec = narrative_agent.evaluate_candidate(
         candidate=dummy_cand,
         visual_tags=v_tags,
-        creator_handle="@RockstarGamerHQ",
+        creator_handle="@GamingCreator",
     )
     reasoning_latency = round(time.time() - t1, 2)
     reasoning_peak_vram = get_current_vram_mb()
@@ -387,7 +387,7 @@ def audit_real_footage_pipeline(video_path: Path, test_label: str):
         clip_spec = narrative_agent.evaluate_candidate(
             candidate=c,
             visual_tags=v_tags,
-            creator_handle="@RockstarGamerHQ",
+            creator_handle="@GamingCreator",
         )
         highlight_evaluations.append({
             "candidate_id": c.candidate_id,

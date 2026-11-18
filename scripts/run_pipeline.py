@@ -344,7 +344,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run GTA CLIP COMMAND End-to-End Pipeline.")
     parser.add_argument("video_path", help="Path to creator gameplay video or VOD")
-    parser.add_argument("--creator", default="@RockstarGamerHQ", help="Creator handle")
+    parser.add_argument("--creator", required=True, help="Registered creator handle")
     parser.add_argument("--max-clips", type=int, default=3, help="Maximum clips to generate")
     args = parser.parse_args()
 
