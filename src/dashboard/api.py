@@ -236,18 +236,21 @@ def upload_creators(db: Session = Depends(get_db)):
     """List creators with active rights status for the upload form."""
     creators = db.query(Creator).filter(Creator.status == "active").all()
     result = []
+    now = now_utc()
     for cr in creators:
-        active_agree = (
+        agreements = (
             db.query(RightsAgreement)
             .filter(RightsAgreement.creator_id == cr.id, RightsAgreement.status == "active")
-            .first()
+            .all()
         )
+        has_active_rights = any(a.valid_to is None or a.valid_to >= now for a in agreements)
         result.append({
             "id": cr.id,
             "handle": cr.handle,
             "name": cr.name,
             "platform": cr.platform,
-            "has_active_rights": active_agree is not None,
+            "has_active_rights": has_active_rights,
+            "rights_status": "active" if has_active_rights else ("expired" if agreements else "none"),
         })
     return {"creators": result}
 
@@ -689,21 +692,29 @@ def get_library(
 def list_creators(db: Session = Depends(get_db)):
     creators = db.query(Creator).all()
     results = []
+    now = now_utc()
     for cr in creators:
-        active_agree = (
+        agreements = (
             db.query(RightsAgreement)
             .filter(RightsAgreement.creator_id == cr.id, RightsAgreement.status == "active")
-            .first()
+            .all()
         )
+        active_agree = next((a for a in agreements if a.valid_to is None or a.valid_to >= now), None)
         results.append({
             "id": cr.id,
             "handle": cr.handle,
             "name": cr.name,
+            "channel_url": cr.channel_url,
             "platform": cr.platform,
             "status": cr.status,
+            "content_restrictions": cr.content_restrictions,
+            "branding_guidelines": cr.branding_guidelines,
+            "authorized_platforms": cr.authorized_platforms,
             "has_active_rights": active_agree is not None,
+            "rights_status": "active" if active_agree else ("expired" if agreements else "none"),
             "agreement_type": active_agree.agreement_type if active_agree else None,
             "rev_share_percent": active_agree.rev_share_percent if active_agree else 0.0,
+            "clip_count": db.query(FinalClip).filter(FinalClip.creator_id == cr.id).count(),
         })
     return {"creators": results}
 

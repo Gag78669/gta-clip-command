@@ -730,6 +730,10 @@ var _libDebounce = null;
 
 // ===== UTILS =====
 function fmt(n){ return n != null ? Number(n).toLocaleString() : '—'; }
+function responseArray(value,key){
+  if(Array.isArray(value)) return value;
+  return value&&Array.isArray(value[key])?value[key]:[];
+}
 function fmtSize(bytes){
   if(!bytes) return '—';
   if(bytes < 1024) return bytes+' B';
@@ -789,11 +793,13 @@ async function api(path, opts){
     var r=await fetch(path,fetchOpts);
     if(!r.ok){
       var txt=await r.text().catch(function(){ return r.statusText; });
-      throw new Error(txt||'HTTP '+r.status);
+      var message=txt||'HTTP '+r.status;
+      try{ var payload=JSON.parse(txt); if(payload.detail) message=payload.detail; }catch(e){}
+      throw new Error(message);
     }
     return await r.json();
   }catch(e){
-    showToast('API Error: '+e.message,'error');
+    if(opts.showError!==false) showToast('API Error: '+e.message,'error');
     throw e;
   }
 }
@@ -878,10 +884,10 @@ function renderActivity(items){
 // ===== UPLOAD =====
 async function loadUploadCreators(){
   try{
-    var list=await api('/api/upload/creators');
+    var list=responseArray(await api('/api/upload/creators'),'creators');
     var sel=document.getElementById('upload-creator');
     sel.innerHTML='<option value="">— Select creator —</option>'+list.map(function(c){
-      return '<option value="'+c.id+'" data-rights="'+(c.rights_status||'')+'">'+esc(c.handle)+' — '+esc(c.name||'')+'</option>';
+      return '<option value="'+c.id+'" data-rights="'+(c.rights_status||(c.has_active_rights?'active':'none'))+'">'+esc(c.handle)+' — '+esc(c.name||'')+'</option>';
     }).join('');
     sel.onchange=function(){
       var opt=sel.options[sel.selectedIndex];
@@ -1075,7 +1081,7 @@ function appendLog(line){
 // ===== LIBRARY =====
 async function loadLibraryCreators(){
   try{
-    var list=await api('/api/creators');
+    var list=responseArray(await api('/api/creators'),'creators');
     var sel=document.getElementById('lib-creator');
     sel.innerHTML='<option value="">All Creators</option>'+list.map(function(c){
       return '<option value="'+c.id+'">'+esc(c.handle)+'</option>';
@@ -1097,7 +1103,7 @@ async function loadLibrary(){
   var grid=document.getElementById('clip-grid');
   grid.innerHTML='<div style="grid-column:1/-1" class="empty-state"><div class="spinner" style="margin:0 auto 8px"></div>Loading…</div>';
   try{
-    var clips=await api('/api/library?'+params.toString());
+    var clips=responseArray(await api('/api/library?'+params.toString()),'clips');
     renderClipGrid(clips);
   }catch(e){}
 }
@@ -1127,7 +1133,7 @@ async function openClipModal(id){
   overlay.classList.add('open');
   details.innerHTML='<div class="spinner"></div>';
   try{
-    var clips=await api('/api/library');
+    var clips=responseArray(await api('/api/library'),'clips');
     var c=clips.find(function(x){ return x.id==id; });
     if(!c){ details.innerHTML='<div>Clip not found</div>'; return; }
     document.getElementById('modal-title').textContent=c.title||'Clip Detail';
@@ -1273,16 +1279,17 @@ async function bulkApprove(){
 // ===== CREATORS =====
 async function loadCreators(){
   try{
-    var list=await api('/api/creators');
+    var list=responseArray(await api('/api/creators'),'creators');
     renderCreators(list);
   }catch(e){}
 }
 function renderCreators(creators){
   var tb=document.getElementById('creators-tbody');
   if(!creators.length){ tb.innerHTML='<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">👤</div><div>No creators</div></div></td></tr>'; return; }
-  var rightsMap={active:'🟢 Active',none:'🔴 None',pending:'🟡 Pending'};
+  var rightsMap={active:'🟢 Active',none:'🔴 None',pending:'🟡 Pending',expired:'⚠️ Expired'};
   tb.innerHTML=creators.map(function(c){
-    var rights=rightsMap[c.rights_status]||('🔵 '+(c.rights_status||'—'));
+    var rightsStatus=c.rights_status||(c.has_active_rights?'active':'none');
+    var rights=rightsMap[rightsStatus]||('🔵 '+rightsStatus);
     return '<tr><td><strong>'+esc(c.handle)+'</strong></td><td>'+esc(c.name||'—')+'</td><td>'+esc(c.platform||'—')+'</td>'
       +'<td><span class="badge badge-'+(c.status==='active'?'approved':'queued')+'">'+(c.status||'active')+'</span></td>'
       +'<td>'+rights+'</td><td>'+(c.clip_count||0)+'</td>'
@@ -1301,7 +1308,7 @@ function openCreatorForm(){
 }
 async function editCreator(id){
   try{
-    var list=await api('/api/creators');
+    var list=responseArray(await api('/api/creators'),'creators');
     var c=list.find(function(x){ return x.id==id; });
     if(!c) return;
     document.getElementById('creator-form-title').textContent='Edit Creator';
@@ -1329,12 +1336,18 @@ async function saveCreator(){
   };
   if(!body.handle){ showToast('Handle is required','warn'); return; }
   try{
-    if(id) await api('/api/creators/'+id,{method:'PUT',body:body});
-    else await api('/api/creators',{method:'POST',body:body});
+    if(id) await api('/api/creators/'+id,{method:'PUT',body:body,showError:false});
+    else await api('/api/creators',{method:'POST',body:body,showError:false});
     showToast('Creator '+(id?'updated':'created'),'success');
     closeCreatorFormDirect();
     loadCreators();
-  }catch(e){}
+  }catch(e){
+    if(e.message.toLowerCase().includes('creator handle already exists')){
+      await loadCreators();
+      closeCreatorFormDirect();
+      showToast('That handle is already registered. The list is refreshed; use Edit to update it.','warn');
+    }else showToast('Could not save creator: '+e.message,'error');
+  }
 }
 async function deleteCreator(id){
   if(!confirm('Delete this creator? This cannot be undone.')) return;
