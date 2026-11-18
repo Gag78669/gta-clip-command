@@ -8,4 +8,9 @@ output = root / "frontend_dist"
 if output.exists():
     shutil.rmtree(output)
 shutil.copytree(source, output)
-(output / "config.js").write_text("window.GTA_API_BASE = '';\nwindow.GTA_HOSTED = true;\n", encoding="utf-8")
+(output / "config.js").write_text(
+    "window.GTA_API_BASE = '';\n"
+    "window.GTA_HOSTED = false;\n"
+    "window.GTA_CONNECT_LOCAL = true;\n",
+    encoding="utf-8",
+)

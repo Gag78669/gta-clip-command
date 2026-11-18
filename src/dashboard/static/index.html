@@ -761,6 +761,17 @@ textarea.form-control{resize:vertical;min-height:80px}
 <div id="toast-container"></div>
 
 <script src="/config.js"></script>
+<div id="local-backend-gate" style="display:none;position:fixed;inset:0;z-index:6000;background:rgba(5,6,12,.97);align-items:center;justify-content:center;padding:20px">
+  <div style="width:min(520px,100%);background:#12141f;border:1px solid #292e48;border-radius:12px;padding:28px;box-shadow:0 20px 80px #0009">
+    <div style="font-weight:700;color:#ff2a85;font-size:20px;margin-bottom:8px">Connect to your local clipper</div>
+    <div style="color:#8790b6;margin-bottom:18px">The free web page runs on Vercel. Video files, Ollama, and processing stay on this computer. Start GTA Clip Command from its terminal, then connect here.</div>
+    <label class="form-label" for="local-api-url">Local API address</label>
+    <input class="form-control" id="local-api-url" type="url" value="http://127.0.0.1:8000" style="width:100%;margin:8px 0 14px">
+    <button class="btn btn-primary" id="local-api-connect" onclick="connectLocalBackend()" style="width:100%">Connect to local app</button>
+    <div id="local-api-message" style="margin-top:14px;color:#8790b6;min-height:22px"></div>
+    <div style="color:#6b7294;font-size:12px;margin-top:8px">Your browser may ask for permission to let this site connect to localhost. Allow it to continue. This connection is private to your computer.</div>
+  </div>
+</div>
 <div id="account-gate" style="display:none;position:fixed;inset:0;z-index:5000;background:rgba(5,6,12,.96);align-items:center;justify-content:center;padding:20px">
   <div style="width:min(440px,100%);background:#12141f;border:1px solid #292e48;border-radius:12px;padding:28px;box-shadow:0 20px 80px #0009">
     <div style="font-weight:700;color:#ff2a85;font-size:18px;margin-bottom:6px">GTA CLIP COMMAND</div>
@@ -774,6 +785,17 @@ textarea.form-control{resize:vertical;min-height:80px}
 </div>
 <script>
 function apiUrl(path){var base=(window.GTA_API_BASE||'').replace(/\/$/,'');return base+(path.charAt(0)==='/'?path:'/'+path);}
+function isLoopbackBase(base){try{var host=new URL(base).hostname.toLowerCase();return host==='localhost'||host==='127.0.0.1'||host==='[::1]';}catch(e){return false;}}
+function connectLocalBackend(){
+  var input=document.getElementById('local-api-url'),message=document.getElementById('local-api-message'),button=document.getElementById('local-api-connect');
+  var base=(input.value||'').trim().replace(/\/+$/,'');
+  try{var parsed=new URL(base);if(!['http:','https:'].includes(parsed.protocol)||parsed.pathname!=='/'||parsed.search||parsed.hash||!isLoopbackBase(base)){throw new Error('Use a local address such as http://127.0.0.1:8000.');}base=parsed.origin;}catch(e){message.textContent=e.message||'Enter a valid local API address.';message.style.color='var(--red)';return;}
+  button.disabled=true;message.textContent='Connecting…';message.style.color='var(--text-dim)';
+  fetch(base+'/healthz',{method:'GET',mode:'cors',credentials:'include',cache:'no-store',targetAddressSpace:'loopback'})
+    .then(function(r){if(!r.ok)throw new Error('Local API returned HTTP '+r.status+'.');return r.json();})
+    .then(function(d){if(d.status!=='ok')throw new Error('Local API did not return a healthy status.');window.GTA_API_BASE=base;localStorage.setItem('gta-local-api-base',base);document.getElementById('local-backend-gate').style.display='none';startDashboard();})
+    .catch(function(e){message.textContent='Could not connect. Start the app with “python scripts/start_dashboard.py”, then check FRONTEND_ORIGIN in your local .env matches this Vercel site. '+(e.message||'');message.style.color='var(--red)';button.disabled=false;});
+}
 function setAccountMode(mode){window._accountMode=mode;document.getElementById('account-submit').textContent=mode==='register'?'Create account':'Sign in';document.getElementById('account-password').autocomplete=mode==='register'?'new-password':'current-password';document.getElementById('account-message').textContent=mode==='register'?'Use a password with at least 12 characters. A verification link will be emailed to you.':'';}
 async function submitAccount(){var mode=window._accountMode||'login',email=document.getElementById('account-email').value.trim(),password=document.getElementById('account-password').value,message=document.getElementById('account-message');message.textContent='Please wait…';try{var result=await api('/api/auth/'+(mode==='register'?'register':'login'),{method:'POST',body:{email:email,password:password},showError:false});if(mode==='register'){message.textContent='Verification email sent. Verify your address, then sign in.';return;}document.getElementById('account-gate').style.display='none';window.location.reload();}catch(e){message.textContent=e.message||'Could not complete account request.';}}
 // ===== GLOBALS =====
@@ -851,6 +873,7 @@ async function api(path, opts){
       fetchOpts.body=opts.body;
     }
     fetchOpts.credentials='include';
+    if(isLoopbackBase(window.GTA_API_BASE||'')) fetchOpts.targetAddressSpace='loopback';
     var r=await fetch(apiUrl(path),fetchOpts);
     if(!r.ok){
       var txt=await r.text().catch(function(){ return r.statusText; });
@@ -1724,8 +1747,10 @@ async function loadAnalytics(){
 }
 
 // ===== INIT =====
+function startDashboard(){checkAccountAccess().then(function(allowed){if(!allowed)return;fetchOverview();initSSE();setInterval(fetchOverview,10000);if(window.GTA_HOSTED)setInterval(refreshAccountUsage,30000);});}
 window.addEventListener('DOMContentLoaded',function(){
-  checkAccountAccess().then(function(allowed){if(!allowed)return;fetchOverview();initSSE();setInterval(fetchOverview,10000);if(window.GTA_HOSTED)setInterval(refreshAccountUsage,30000);});
+  if(window.GTA_CONNECT_LOCAL){var saved=localStorage.getItem('gta-local-api-base');if(saved&&isLoopbackBase(saved))document.getElementById('local-api-url').value=saved;document.getElementById('local-backend-gate').style.display='flex';return;}
+  startDashboard();
 });
 </script>
 </body>

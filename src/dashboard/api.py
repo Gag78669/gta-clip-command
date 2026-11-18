@@ -799,6 +799,11 @@ async def upload_video(
         raise
     db.refresh(job)
 
+    # In local mode the uploader expects accepted jobs to begin immediately.
+    # The in-process worker is owned by this machine, so this does not require
+    # a hosted queue or background-worker service.
+    _enqueue_job(job, media, creator)
+
     logger.info("Uploaded %s → media=%s job=%s", safe_name, media.id, job.id)
     return {"job_id": job.id, "media_id": media.id, "file": str(dest), "duration_seconds": duration}
 

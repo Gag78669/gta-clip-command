@@ -104,39 +104,39 @@ The dashboard server runs without automatic Python code reload. After pulling co
 
 Open **Settings**, select an OpenAI-compatible provider for reasoning and/or vision, enter its API base URL and model IDs, then test and save the connection. The test checks authentication and makes a minimal inference call for each selected model. For Groq, use `https://api.groq.com/openai/v1`. Locally, a user-supplied key is protected with Windows DPAPI; hosted account keys are encrypted with `CLOUD_KEY_ENCRYPTION_KEY`. Neither key is returned to the browser. Keep the key blank to retain a saved user key. Hosted inference sends the relevant transcript and, for vision, sampled frames to the configured provider.
 
-## Hosted deployment: Vercel frontend and Render services
+## Zero-cost web UI with local processing
 
-The repository includes a Vercel static frontend build and a Render Blueprint for the API, worker, PostgreSQL database, and Redis-compatible queue. The hosted configuration also needs an S3-compatible object-storage bucket (for example, AWS S3 or Cloudflare R2) and an SMTP account. Render's local filesystem is ephemeral, so source footage, generated clips, thumbnails, and rights documents are stored in object storage. Large video bytes go directly from the browser to that storage; the Vercel function proxy only handles API requests and media redirects.
+The free deployment keeps the browser interface on Vercel and runs the API, SQLite database, worker, FFmpeg, and Ollama on your Windows computer. Source videos, generated clips, rights documents, and AI keys stay on that computer. Your PC must be on and the dashboard server must be running whenever you want to use the deployed page. This avoids paid Render compute, cloud object storage, and cloud model charges.
 
-### 1. Configure Render
+Render does offer a Hobby workspace plan and free compute for selected service types. The earlier Render Blueprint selected paid compute plans, so do not approve that pending Blueprint sync. Render Free does not provide a separate background worker, and its free Postgres and Key Value services have data-retention/restart limits. See [Render's free-tier limits](https://render.com/docs/free). The local worker is what keeps the video pipeline available without a paid Render worker.
 
-Create a Render Blueprint from `render.yaml`. It defines the FastAPI web service, a separate background worker, PostgreSQL, and Key Value. The Blueprint generates one shared `CLOUD_KEY_ENCRYPTION_KEY`; keep it unchanged across deploys and backups. The API and worker each prompt for storage credentials, and the API prompts for SMTP credentials. Enter the same storage credentials for both services. Update `FRONTEND_ORIGIN` in the shared environment group after Vercel assigns the final hostname:
+### 1. Deploy the static UI to Vercel Hobby
 
-- `FRONTEND_ORIGIN`: the deployed Vercel origin, such as `https://your-project.vercel.app`.
-- `CLOUD_KEY_ENCRYPTION_KEY`: the Blueprint generates this once. For manual setup, generate it with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Keep the same key across deploys and backups; changing it makes already-stored user keys unreadable.
-- `GROQ_API_KEY`: optional platform-owned key; enter the same value for the API and worker. Leave empty to require users to provide their own key in Settings.
-- `STORAGE_BUCKET`, `STORAGE_ENDPOINT_URL`, `STORAGE_ACCESS_KEY`, `STORAGE_SECRET_KEY`, and `STORAGE_REGION`: credentials for your S3-compatible bucket. Set the bucket's CORS policy to allow `PUT` from the Vercel origin, `AllowedHeaders: *`, and expose `ETag` if required by the storage provider.
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, and `SMTP_FROM`: used to send account verification email.
+Connect this GitHub repository to a Vercel project. Keep the project root at the repository root. The build command in `vercel.json` creates `frontend_dist/`; no `API_ORIGIN`, database, storage, or model secrets belong in Vercel. The static UI asks you to connect to the local API when opened.
 
-The API fails startup when required hosted services are missing. The Render services install the pinned Python runtime from `.python-version` and FFmpeg/FFprobe using `apt.txt`. The Blueprint uses a 2 GB API plan and a 4 GB worker plan because media processing and local transcription still need CPU and memory. A GPU is not expected in the hosted worker; model inference uses the configured cloud provider.
+### 2. Allow the deployed page to connect to localhost
 
-### 2. Configure Vercel
+After Vercel assigns the project URL, copy its exact origin (for example, `https://your-project.vercel.app`) into the local `.env` file:
 
-Import this repository as a Vercel project, leave the project root at the repository root, and set `API_ORIGIN` to the Render API's public HTTPS URL (no trailing slash). `vercel.json` builds `frontend_dist/` and routes the API, video, and thumbnail paths through a same-origin proxy so the browser's HTTP-only account cookie remains first-party. Direct storage uploads go from the browser to the signed S3 URL and do not pass through Vercel. Configure the storage bucket's CORS `AllowedOrigins` to the final Vercel project/custom-domain origin.
+```dotenv
+AUTH_ENABLED=false
+REDIS_URL=
+FRONTEND_ORIGIN=https://your-project.vercel.app
+```
 
-### 3. Accounts, keys, and free usage
+Keep the local SQLite `DATABASE_URL` from `.env.example`, and leave storage credentials empty. Restart the dashboard after changing `.env`. The local API remains bound to `127.0.0.1`; it is not exposed to the public internet. When Chrome asks to let the Vercel site access your local network, allow it. The page only accepts loopback API addresses such as `http://127.0.0.1:8000` or `http://localhost:8000`.
 
-Hosted mode enables public signup. New users must verify their email before sign-in. Sessions use random tokens stored server-side as hashes and are sent in Secure, HttpOnly cookies. The database applies account ownership filters to creators, agreements, media, jobs, clips, and settings.
+### 3. Start local processing
 
-Each account receives 1,200 seconds of processing time per UTC day. Each source video is limited to 600 seconds, measured server-side with FFprobe. Accepted jobs reserve their measured duration immediately to prevent concurrent uploads from bypassing the allowance. The reservation is consumed once processing reaches AI/transcription work, or on successful completion; failures and cancellations before that stage release it. Failed jobs that used the AI stage remain charged and need an available allowance to retry. The account badge shows remaining minutes for the current UTC day.
+Install FFmpeg/FFprobe, install the Python requirements, and start Ollama with the models configured in `.env`. Then run:
 
-Users may save their own OpenAI-compatible provider key in Settings, encrypted with the hosted Fernet key. If `GROQ_API_KEY` is set, it is available as a platform key when a user has not saved a personal key. Provider quotas are shared at the Groq account/project level, so the app's per-account time limit cannot guarantee that provider rate limits will never be reached. Requests handle transient 429 and 5xx responses with bounded retries.
+```powershell
+python scripts/start_dashboard.py
+```
 
-### 4. Verify the deployment
+Open the Vercel URL, choose **Connect to local app**, and click **Connect to local app**. Uploads are sent directly to the local API and processing starts on the local worker. Keep the terminal and computer running while jobs process. You can also use `http://127.0.0.1:8000` directly for local-only access.
 
-After both providers report healthy, create an account, verify its email, and sign in. In Settings, select Groq (or another OpenAI-compatible endpoint), provide at least one model ID, and run **Test Cloud Connection**. The test calls `/models`, then runs minimal text and/or image inference for the chosen model IDs. Upload one short test video, start its queue job, verify it completes, and open its generated clip. Confirm a video longer than 10 minutes is rejected and that the displayed daily allowance drops by the duration of an accepted job.
-
-Do not put API keys, database URLs, SMTP credentials, or storage credentials into the repository or Vercel static files. Configure secrets in Render's environment settings; only `API_ORIGIN` belongs in Vercel's server-side environment.
+The zero-cost hybrid is a single-user local installation; it does not provide public cloud accounts or shared server-side data. The 10-minute maximum video duration remains enforced by FFprobe on your computer. Cloud model APIs are optional and can incur provider charges; Ollama remains the no-provider-bill option. Vercel Hobby has usage limits and is intended for personal projects; check its current [Hobby plan terms](https://vercel.com/docs/plans/hobby).
 
 ## Tests
 
@@ -161,7 +161,6 @@ src/fusion/                Candidate highlight matching
 src/reasoning/             Ollama and OpenAI-compatible model clients
 src/composer/              Vertical framing, subtitles, and rendering
 src/qa/                    Export validation
-src/dashboard/             FastAPI application, local/hosted worker, and browser UI
-api/                      Vercel same-origin API/media proxy
+src/dashboard/             FastAPI application, local worker, and browser UI
 tests/                     Automated tests
 ```
