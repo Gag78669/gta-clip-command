@@ -1,0 +1,1462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GTA CLIP COMMAND — Control Center</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ===== RESET & BASE ===== */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0b10;
+  --card:#12141f;
+  --panel:#181b2a;
+  --border:#1e2235;
+  --pink:#ff2a85;
+  --cyan:#00f0ff;
+  --yellow:#ffd700;
+  --green:#00ff88;
+  --red:#ff4455;
+  --text:#e0e4f0;
+  --text-dim:#6b7294;
+  --text-muted:#3a3f5a;
+  --sidebar-w:240px;
+  --header-h:56px;
+}
+html,body{height:100%;overflow:hidden}
+body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-size:14px;line-height:1.5;display:flex;flex-direction:column}
+
+/* ===== SCROLLBAR ===== */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#2a2f4a}
+
+/* ===== HEADER ===== */
+#header{
+  height:var(--header-h);display:flex;align-items:center;padding:0 20px;
+  background:var(--card);border-bottom:1px solid var(--border);
+  flex-shrink:0;z-index:100;gap:12px;
+}
+#menu-toggle{background:none;border:none;color:var(--text);cursor:pointer;padding:6px;display:none;font-size:20px}
+#header-logo{font-family:'Chakra Petch',sans-serif;font-size:18px;font-weight:700;color:var(--pink);letter-spacing:2px;text-transform:uppercase}
+#header-logo span{color:var(--cyan)}
+#header-right{margin-left:auto;display:flex;align-items:center;gap:16px}
+#sse-status{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim)}
+#sse-dot{width:8px;height:8px;border-radius:50%;background:var(--red);transition:background .3s}
+#sse-dot.connected{background:var(--green)}
+#header-time{font-size:12px;color:var(--text-dim);font-family:'Chakra Petch',sans-serif}
+
+/* ===== LAYOUT ===== */
+#layout{display:flex;flex:1;overflow:hidden}
+
+/* ===== SIDEBAR ===== */
+#sidebar{
+  width:var(--sidebar-w);flex-shrink:0;background:var(--card);
+  border-right:1px solid var(--border);overflow-y:auto;
+  display:flex;flex-direction:column;transition:transform .25s ease;
+}
+#sidebar-label{
+  padding:16px 16px 8px;font-family:'Chakra Petch',sans-serif;
+  font-size:10px;letter-spacing:2px;color:var(--text-muted);text-transform:uppercase
+}
+#sidebar nav{flex:1}
+.nav-item{
+  display:flex;align-items:center;gap:10px;padding:11px 16px;
+  cursor:pointer;color:var(--text-dim);font-family:'Chakra Petch',sans-serif;
+  font-size:13px;font-weight:500;transition:all .2s;border-left:3px solid transparent;
+  user-select:none;
+}
+.nav-item:hover{color:var(--text);background:var(--panel)}
+.nav-item.active{color:var(--pink);border-left-color:var(--pink);background:rgba(255,42,133,.07)}
+.nav-item .nav-icon{font-size:16px;width:20px;text-align:center;flex-shrink:0}
+#sidebar-footer{padding:16px;border-top:1px solid var(--border);font-size:11px;color:var(--text-muted);font-family:'Chakra Petch',sans-serif}
+
+/* ===== MAIN CONTENT ===== */
+#main{flex:1;overflow-y:auto;overflow-x:hidden}
+.section{display:none;padding:24px;animation:fadeIn .2s ease}
+.section.active{display:block}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* ===== SECTION HEADER ===== */
+.section-title{font-family:'Chakra Petch',sans-serif;font-size:22px;font-weight:700;color:var(--text);margin-bottom:4px}
+.section-sub{color:var(--text-dim);font-size:13px;margin-bottom:24px}
+
+/* ===== KPI CARDS ===== */
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+.kpi-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;position:relative;overflow:hidden;transition:border-color .2s}
+.kpi-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--accent,var(--cyan))}
+.kpi-card:hover{border-color:var(--accent,var(--cyan))}
+.kpi-label{font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+.kpi-value{font-family:'Chakra Petch',sans-serif;font-size:28px;font-weight:700;color:var(--text)}
+.kpi-sub{font-size:11px;color:var(--text-muted);margin-top:4px}
+
+/* ===== CARDS / PANELS ===== */
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:20px}
+.card-title{font-family:'Chakra Petch',sans-serif;font-size:14px;font-weight:600;color:var(--text);margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.card-title .dot{width:8px;height:8px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
+
+/* ===== TABLES ===== */
+.table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;min-width:600px}
+thead{background:var(--panel)}
+th{padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--border)}
+td{padding:10px 14px;border-bottom:1px solid var(--border);vertical-align:middle}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:rgba(255,255,255,.02)}
+
+/* ===== BADGES ===== */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.badge-queued{background:rgba(107,114,148,.2);color:var(--text-dim)}
+.badge-running{background:rgba(255,215,0,.15);color:var(--yellow)}
+.badge-completed{background:rgba(0,255,136,.15);color:var(--green)}
+.badge-failed{background:rgba(255,68,85,.15);color:var(--red)}
+.badge-paused{background:rgba(0,240,255,.15);color:var(--cyan)}
+.badge-cancelled{background:rgba(107,114,148,.15);color:var(--text-muted)}
+.badge-pending{background:rgba(255,215,0,.15);color:var(--yellow)}
+.badge-approved{background:rgba(0,255,136,.15);color:var(--green)}
+.badge-rejected{background:rgba(255,68,85,.15);color:var(--red)}
+
+/* ===== PROGRESS BARS ===== */
+.progress-wrap{background:var(--panel);border-radius:4px;height:6px;overflow:hidden;min-width:80px}
+.progress-bar{height:100%;border-radius:4px;transition:width .4s ease}
+.progress-bar.running{background:var(--yellow)}
+.progress-bar.completed{background:var(--green)}
+.progress-bar.failed{background:var(--red)}
+.progress-bar.queued{background:var(--text-muted)}
+.progress-bar.paused{background:var(--cyan)}
+
+/* ===== BUTTONS ===== */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;font-family:'Inter',sans-serif;transition:all .2s;white-space:nowrap}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{background:var(--pink);color:#fff}
+.btn-primary:hover:not(:disabled){background:#e02070;box-shadow:0 0 16px rgba(255,42,133,.4)}
+.btn-cyan{background:var(--cyan);color:#0a0b10}
+.btn-cyan:hover:not(:disabled){box-shadow:0 0 16px rgba(0,240,255,.4)}
+.btn-green{background:var(--green);color:#0a0b10}
+.btn-green:hover:not(:disabled){box-shadow:0 0 16px rgba(0,255,136,.4)}
+.btn-red{background:var(--red);color:#fff}
+.btn-red:hover:not(:disabled){box-shadow:0 0 16px rgba(255,68,85,.4)}
+.btn-ghost{background:var(--panel);color:var(--text-dim);border:1px solid var(--border)}
+.btn-ghost:hover:not(:disabled){color:var(--text);border-color:var(--text-muted)}
+.btn-sm{padding:4px 10px;font-size:11px}
+.btn-icon{padding:5px 8px;font-size:13px}
+
+/* ===== FORMS ===== */
+.form-group{margin-bottom:16px}
+.form-label{display:block;font-size:12px;font-weight:600;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
+.form-control{width:100%;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:9px 12px;font-size:13px;font-family:'Inter',sans-serif;transition:border-color .2s;outline:none}
+.form-control:focus{border-color:var(--cyan);box-shadow:0 0 0 2px rgba(0,240,255,.1)}
+.form-control::placeholder{color:var(--text-muted)}
+select.form-control option{background:var(--panel);color:var(--text)}
+textarea.form-control{resize:vertical;min-height:80px}
+
+/* ===== ACTIVITY FEED ===== */
+.activity-item{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px}
+.activity-item:last-child{border-bottom:none}
+.activity-dot{width:6px;height:6px;border-radius:50%;background:var(--cyan);margin-top:5px;flex-shrink:0}
+.activity-time{color:var(--text-muted);font-size:11px;white-space:nowrap;margin-left:auto}
+
+/* ===== DRAG DROP ===== */
+#drop-zone{border:2px dashed var(--border);border-radius:12px;padding:48px;text-align:center;cursor:pointer;transition:all .3s;background:var(--panel);margin-bottom:20px}
+#drop-zone:hover,#drop-zone.dragover{border-color:var(--cyan);background:rgba(0,240,255,.05);box-shadow:0 0 30px rgba(0,240,255,.1);animation:pulse-border .8s ease infinite alternate}
+@keyframes pulse-border{from{box-shadow:0 0 10px rgba(0,240,255,.1)}to{box-shadow:0 0 30px rgba(0,240,255,.3)}}
+#drop-icon{font-size:48px;margin-bottom:16px;color:var(--text-muted)}
+#drop-text{font-family:'Chakra Petch',sans-serif;font-size:18px;color:var(--text-dim);margin-bottom:8px}
+#drop-sub{font-size:12px;color:var(--text-muted)}
+
+/* ===== UPLOAD PROGRESS ===== */
+#upload-progress-wrap{display:none;margin-top:16px}
+#upload-progress-track{background:var(--panel);border-radius:4px;overflow:hidden;margin-bottom:8px}
+#upload-progress-bar{height:8px;background:var(--pink);border-radius:4px;width:0%;transition:width .1s}
+
+/* ===== FILE INFO ===== */
+#file-info{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:16px;display:none}
+
+/* ===== MONITOR ===== */
+.pipeline-stage{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}
+.pipeline-stage:last-child{border-bottom:none}
+.stage-num{width:28px;height:28px;border-radius:50%;background:var(--panel);border:2px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--text-muted);flex-shrink:0}
+.stage-num.completed{background:rgba(0,255,136,.15);border-color:var(--green);color:var(--green)}
+.stage-num.running{background:rgba(255,215,0,.15);border-color:var(--yellow);color:var(--yellow)}
+.stage-num.failed{background:rgba(255,68,85,.15);border-color:var(--red);color:var(--red)}
+.stage-name{flex:1;font-size:13px;font-weight:500}
+.stage-time{font-size:11px;color:var(--text-muted)}
+
+/* ===== TERMINAL ===== */
+#terminal{background:#050609;border:1px solid var(--border);border-radius:8px;padding:12px;height:280px;overflow-y:auto;font-family:'Courier New',monospace;font-size:12px;line-height:1.6;color:#a8b2d0}
+.log-line{padding:1px 0}
+.log-line.info{color:#a8b2d0}
+.log-line.warn{color:var(--yellow)}
+.log-line.error{color:var(--red)}
+.log-line.success{color:var(--green)}
+
+/* ===== CLIP GRID ===== */
+.clip-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.clip-card{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;cursor:pointer;transition:all .2s}
+.clip-card:hover{border-color:var(--pink);transform:translateY(-2px);box-shadow:0 8px 24px rgba(255,42,133,.15)}
+.clip-thumb{position:relative;width:100%;padding-top:177.78%;background:var(--panel);overflow:hidden}
+.clip-thumb img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover}
+.clip-thumb-placeholder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:40px;color:var(--text-muted)}
+.clip-info{padding:12px}
+.clip-title{font-weight:600;font-size:13px;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.clip-scores{display:flex;gap:8px;margin-bottom:8px}
+.score-pill{background:var(--panel);border-radius:4px;padding:2px 7px;font-size:10px;font-weight:600}
+.score-viral{color:var(--pink)}
+.score-humor{color:var(--yellow)}
+.score-action{color:var(--cyan)}
+.clip-meta{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--text-dim)}
+
+/* ===== MODAL ===== */
+#modal-overlay{display:none;position:fixed;inset:0;background:rgba(5,6,10,.85);z-index:999;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+#modal-overlay.open{display:flex}
+#modal{background:var(--card);border:1px solid var(--border);border-radius:14px;width:900px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 24px 64px rgba(0,0,0,.8)}
+#modal-header{padding:20px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+#modal-body{padding:24px;display:grid;grid-template-columns:270px 1fr;gap:24px}
+#modal-close{background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:20px;line-height:1}
+#modal-close:hover{color:var(--text)}
+
+/* ===== PHONE MOCKUP ===== */
+.phone-mockup{width:270px;height:480px;border-radius:36px;border:3px solid #2a2f4a;background:#000;overflow:hidden;position:relative;flex-shrink:0;box-shadow:0 0 40px rgba(0,0,0,.8),inset 0 0 10px rgba(0,0,0,.5)}
+.phone-mockup video,.phone-mockup img{width:100%;height:100%;object-fit:cover}
+.phone-mockup::before{content:'';position:absolute;top:12px;left:50%;transform:translateX(-50%);width:60px;height:4px;background:#2a2f4a;border-radius:2px;z-index:10}
+
+/* ===== REVIEW SPLIT ===== */
+#review-layout{display:grid;grid-template-columns:320px 1fr;gap:20px;min-height:600px}
+#review-list{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow-y:auto}
+.review-item{padding:12px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .2s;display:flex;align-items:center;gap:10px}
+.review-item:hover{background:var(--panel)}
+.review-item.selected{background:rgba(255,42,133,.07);border-left:3px solid var(--pink)}
+.review-item-title{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.review-item-sub{font-size:11px;color:var(--text-dim)}
+#review-panel{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px}
+
+/* ===== SLIDE-IN PANEL ===== */
+#creator-form-overlay{display:none;position:fixed;inset:0;background:rgba(5,6,10,.7);z-index:500;backdrop-filter:blur(2px)}
+#creator-form-overlay.open{display:flex;justify-content:flex-end}
+#creator-form-panel{width:440px;height:100%;background:var(--card);border-left:1px solid var(--border);overflow-y:auto;padding:24px;animation:slideIn .25s ease}
+@keyframes slideIn{from{transform:translateX(100%)}to{transform:none}}
+
+/* ===== USAGE BARS ===== */
+.usage-bar-wrap{background:var(--panel);border-radius:6px;height:10px;overflow:hidden;margin-top:6px}
+.usage-bar{height:100%;border-radius:6px;transition:width .4s ease}
+
+/* ===== STAGE ICON ===== */
+.stage-icon{font-size:14px;width:20px;text-align:center}
+
+/* ===== FILTER ROW ===== */
+.filter-row{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:flex-end}
+.filter-row .form-group{margin-bottom:0;min-width:140px}
+
+/* ===== SPINNER ===== */
+.spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--cyan);border-radius:50%;animation:spin .6s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ===== TOAST ===== */
+#toast-container{position:fixed;bottom:24px;right:24px;z-index:9999;display:flex;flex-direction:column;gap:8px}
+.toast{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 16px;display:flex;align-items:center;gap:10px;min-width:280px;max-width:380px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.5);animation:toastIn .2s ease}
+@keyframes toastIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
+.toast.error{border-color:var(--red)}
+.toast.success{border-color:var(--green)}
+.toast.info{border-color:var(--cyan)}
+.toast.warn{border-color:var(--yellow)}
+.toast-icon{font-size:16px;flex-shrink:0}
+.toast-msg{flex:1}
+.toast-close{background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;line-height:1}
+
+/* ===== RIGHTS INDICATOR ===== */
+.rights-ok{color:var(--green);display:flex;align-items:center;gap:6px;font-size:13px}
+.rights-warn{color:var(--red);display:flex;align-items:center;gap:6px;font-size:13px}
+.rights-pending{color:var(--yellow);display:flex;align-items:center;gap:6px;font-size:13px}
+
+/* ===== REVIEW CHECKBOX ===== */
+.review-checkbox{accent-color:var(--pink);width:15px;height:15px;cursor:pointer}
+
+/* ===== RESPONSIVE ===== */
+@media(max-width:900px){
+  .kpi-grid{grid-template-columns:repeat(2,1fr)}
+  .clip-grid{grid-template-columns:repeat(2,1fr)}
+  #review-layout{grid-template-columns:1fr;min-height:auto}
+  #modal-body{grid-template-columns:1fr}
+}
+@media(max-width:640px){
+  :root{--sidebar-w:220px}
+  #sidebar{position:fixed;top:var(--header-h);bottom:0;left:0;z-index:200;transform:translateX(-100%)}
+  #sidebar.open{transform:none}
+  #menu-toggle{display:block}
+  .kpi-grid{grid-template-columns:repeat(2,1fr)}
+  .clip-grid{grid-template-columns:1fr}
+  #main{width:100%}
+}
+
+/* ===== MISC UTILITIES ===== */
+.empty-state{text-align:center;padding:48px;color:var(--text-muted)}
+.empty-state-icon{font-size:48px;margin-bottom:16px}
+.empty-state-text{font-size:14px}
+.mt-4{margin-top:16px}
+.mb-4{margin-bottom:16px}
+.flex{display:flex}
+.items-center{align-items:center}
+.gap-2{gap:8px}
+.gap-3{gap:12px}
+.ml-auto{margin-left:auto}
+.font-chakra{font-family:'Chakra Petch',sans-serif}
+.row{display:flex;gap:16px;margin-bottom:20px}
+.col{flex:1}
+.bulk-bar{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 16px;display:flex;align-items:center;gap:12px;margin-bottom:12px}
+
+/* ===== AI MODELS ===== */
+.ollama-status{display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--panel);border-radius:8px;margin-bottom:16px;border-left:3px solid var(--border)}
+.model-row.loaded{background:rgba(0,240,255,.05);border-left:3px solid var(--cyan)}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div id="header">
+  <button id="menu-toggle" onclick="toggleSidebar()">☰</button>
+  <div id="header-logo">GTA<span>CLIP</span> COMMAND</div>
+  <div id="header-right">
+    <div id="sse-status">
+      <div id="sse-dot"></div>
+      <span id="sse-label">Disconnected</span>
+    </div>
+    <div id="header-time" class="font-chakra"></div>
+  </div>
+</div>
+
+<!-- LAYOUT -->
+<div id="layout">
+
+  <!-- SIDEBAR -->
+  <div id="sidebar">
+    <div id="sidebar-label">Navigation</div>
+    <nav>
+      <div class="nav-item active" onclick="switchSection('overview')" data-section="overview"><span class="nav-icon">📊</span> Overview</div>
+      <div class="nav-item" onclick="switchSection('upload')" data-section="upload"><span class="nav-icon">📤</span> Upload Center</div>
+      <div class="nav-item" onclick="switchSection('queue')" data-section="queue"><span class="nav-icon">⏱️</span> Queue</div>
+      <div class="nav-item" onclick="switchSection('monitor')" data-section="monitor"><span class="nav-icon">🔍</span> Monitor</div>
+      <div class="nav-item" onclick="switchSection('library')" data-section="library"><span class="nav-icon">📁</span> Library</div>
+      <div class="nav-item" onclick="switchSection('review')" data-section="review"><span class="nav-icon">🎬</span> Review</div>
+      <div class="nav-item" onclick="switchSection('creators')" data-section="creators"><span class="nav-icon">👤</span> Creators</div>
+      <div class="nav-item" onclick="switchSection('models')" data-section="models"><span class="nav-icon">🤖</span> AI Models</div>
+      <div class="nav-item" onclick="switchSection('settings')" data-section="settings"><span class="nav-icon">⚙️</span> Settings</div>
+      <div class="nav-item" onclick="switchSection('analytics')" data-section="analytics"><span class="nav-icon">📈</span> Analytics</div>
+    </nav>
+    <div id="sidebar-footer">v1.0.0 · GTA CLIP COMMAND</div>
+  </div>
+
+  <!-- MAIN -->
+  <div id="main">
+
+    <!-- ===== OVERVIEW ===== -->
+    <div id="section-overview" class="section active">
+      <div class="section-title">📊 Overview</div>
+      <div class="section-sub">System-wide statistics and recent activity</div>
+      <div class="kpi-grid" id="kpi-grid">
+        <div class="kpi-card" style="--accent:var(--cyan)"><div class="kpi-label">Total Videos</div><div class="kpi-value" id="kpi-total-videos"><span class="spinner"></span></div></div>
+        <div class="kpi-card" style="--accent:var(--yellow)"><div class="kpi-label">Processing</div><div class="kpi-value" id="kpi-processing"><span class="spinner"></span></div></div>
+        <div class="kpi-card" style="--accent:var(--green)"><div class="kpi-label">Completed</div><div class="kpi-value" id="kpi-completed"><span class="spinner"></span></div></div>
+        <div class="kpi-card" style="--accent:var(--red)"><div class="kpi-label">Failed</div><div class="kpi-value" id="kpi-failed"><span class="spinner"></span></div></div>
+        <div class="kpi-card" style="--accent:var(--pink)"><div class="kpi-label">Total Clips</div><div class="kpi-value" id="kpi-total-clips"><span class="spinner"></span></div></div>
+        <div class="kpi-card" style="--accent:var(--yellow)"><div class="kpi-label">Pending Review</div><div class="kpi-value" id="kpi-pending-review"><span class="spinner"></span></div></div>
+        <div class="kpi-card" style="--accent:var(--green)"><div class="kpi-label">Approved</div><div class="kpi-value" id="kpi-approved"><span class="spinner"></span></div></div>
+        <div class="kpi-card" style="--accent:var(--red)"><div class="kpi-label">Rejected</div><div class="kpi-value" id="kpi-rejected"><span class="spinner"></span></div></div>
+      </div>
+      <div class="row">
+        <div class="col" style="max-width:220px">
+          <div class="card">
+            <div class="card-title"><span class="dot"></span> Storage</div>
+            <div style="font-family:'Chakra Petch',sans-serif;font-size:32px;font-weight:700;color:var(--cyan)" id="kpi-storage">—</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">GB Used</div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <div class="card-title"><span class="dot"></span> Recent Activity</div>
+            <div id="activity-feed">
+              <div class="empty-state" style="padding:16px"><div class="spinner" style="margin:0 auto 8px"></div><div>Loading activity…</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== UPLOAD CENTER ===== -->
+    <div id="section-upload" class="section">
+      <div class="section-title">📤 Upload Center</div>
+      <div class="section-sub">Add new video footage for processing</div>
+      <div id="drop-zone">
+        <div id="drop-icon">🎥</div>
+        <div id="drop-text">Drop video files here</div>
+        <div id="drop-sub">MP4, MOV, AVI, MKV supported</div>
+        <button class="btn btn-ghost mt-4" onclick="document.getElementById('file-input').click()">Browse Files</button>
+        <input type="file" id="file-input" accept="video/*" style="display:none" onchange="handleFileSelect(this.files[0])">
+      </div>
+      <div id="file-info">
+        <div class="flex gap-3 items-center">
+          <span style="font-size:28px">🎬</span>
+          <div>
+            <div style="font-weight:600" id="fi-name">—</div>
+            <div style="font-size:12px;color:var(--text-dim)" id="fi-meta">—</div>
+          </div>
+          <div id="fi-rights" class="ml-auto"></div>
+        </div>
+        <div id="fi-dup-warning" style="display:none;margin-top:10px;padding:8px 12px;background:rgba(255,215,0,.1);border:1px solid var(--yellow);border-radius:6px;color:var(--yellow);font-size:12px">
+          ⚠️ Duplicate detected — this file may already exist in the system.
+        </div>
+      </div>
+      <div class="row">
+        <div class="col">
+          <div class="form-group">
+            <label class="form-label">Creator</label>
+            <select class="form-control" id="upload-creator"><option value="">Loading creators…</option></select>
+          </div>
+        </div>
+        <div class="col">
+          <div class="form-group">
+            <label class="form-label">Video Title</label>
+            <input type="text" class="form-control" id="upload-title" placeholder="Enter a descriptive title…">
+          </div>
+        </div>
+      </div>
+      <div id="upload-progress-wrap">
+        <div class="form-label">Upload Progress</div>
+        <div id="upload-progress-track"><div id="upload-progress-bar"></div></div>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:4px" id="upload-progress-pct">0%</div>
+      </div>
+      <div id="upload-result" style="display:none;margin-top:12px;padding:12px 16px;background:rgba(0,255,136,.1);border:1px solid var(--green);border-radius:8px;color:var(--green)"></div>
+      <button class="btn btn-primary" id="upload-btn" onclick="startUpload()" style="margin-top:16px">📤 Upload &amp; Process</button>
+    </div>
+
+    <!-- ===== QUEUE ===== -->
+    <div id="section-queue" class="section">
+      <div class="section-title">⏱️ Processing Queue</div>
+      <div class="section-sub">Manage video processing jobs</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Video</th><th>Creator</th><th>Duration</th><th>Stage</th><th>Progress</th><th>Model</th><th>Time</th><th>Candidates</th><th>Clips</th><th>Actions</th></tr></thead>
+          <tbody id="queue-tbody"><tr><td colspan="10"><div class="empty-state"><div class="spinner" style="margin:0 auto 8px"></div>Loading queue…</div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== MONITOR ===== -->
+    <div id="section-monitor" class="section">
+      <div class="section-title">🔍 Pipeline Monitor</div>
+      <div class="section-sub">Real-time stage tracking and logs</div>
+      <div class="form-group" style="max-width:360px;margin-bottom:20px">
+        <label class="form-label">Select Job</label>
+        <select class="form-control" id="monitor-job-select" onchange="loadMonitor(this.value)">
+          <option value="">— choose a job —</option>
+        </select>
+      </div>
+      <div class="row">
+        <div style="width:340px;flex-shrink:0">
+          <div class="card">
+            <div class="card-title"><span class="dot"></span> Pipeline Stages</div>
+            <div id="stage-list"><div class="empty-state" style="padding:16px;font-size:12px">Select a job to view stages</div></div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card" style="height:100%">
+            <div class="card-title"><span class="dot"></span> Live Log</div>
+            <div id="terminal"><div class="log-line info">[ GTA CLIP COMMAND ] Pipeline monitor ready. Select a job to begin.</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== LIBRARY ===== -->
+    <div id="section-library" class="section">
+      <div class="section-title">📁 Clip Library</div>
+      <div class="section-sub">Browse and manage all generated clips</div>
+      <div class="filter-row">
+        <div class="form-group">
+          <label class="form-label">Search</label>
+          <input type="text" class="form-control" id="lib-search" placeholder="Search clips…" oninput="debouncedLoadLibrary()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Creator</label>
+          <select class="form-control" id="lib-creator" onchange="loadLibrary()"><option value="">All Creators</option></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Status</label>
+          <select class="form-control" id="lib-status" onchange="loadLibrary()">
+            <option value="">All</option><option value="pending">Pending</option>
+            <option value="approved">Approved</option><option value="rejected">Rejected</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Min Score (<span id="lib-score-val">0</span>)</label>
+          <input type="range" id="lib-score" min="0" max="10" step="0.5" value="0" class="form-control" style="padding:4px 0" oninput="document.getElementById('lib-score-val').textContent=this.value;debouncedLoadLibrary()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Max Duration (s)</label>
+          <input type="number" class="form-control" id="lib-duration" placeholder="e.g. 60" oninput="debouncedLoadLibrary()">
+        </div>
+        <button class="btn btn-ghost" onclick="loadLibrary()">🔍 Filter</button>
+      </div>
+      <div id="clip-grid" class="clip-grid">
+        <div style="grid-column:1/-1" class="empty-state"><div class="spinner" style="margin:0 auto 8px"></div>Loading…</div>
+      </div>
+    </div>
+
+    <!-- ===== REVIEW ===== -->
+    <div id="section-review" class="section">
+      <div class="section-title">🎬 Review Center</div>
+      <div class="section-sub">Approve, reject and edit clips</div>
+      <div class="flex gap-3 mb-4" style="flex-wrap:wrap;align-items:center">
+        <select class="form-control" id="review-filter" onchange="loadReview()" style="width:160px">
+          <option value="">All Clips</option>
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+        </select>
+        <div id="bulk-bar" class="bulk-bar" style="display:none">
+          <span id="selected-count" style="font-size:13px;color:var(--text-dim)">0 selected</span>
+          <button class="btn btn-green btn-sm" onclick="bulkApprove()">✓ Approve Selected</button>
+        </div>
+      </div>
+      <div id="review-layout">
+        <div id="review-list"><div class="empty-state" style="padding:24px;font-size:12px"><div class="spinner" style="margin:0 auto 8px"></div>Loading…</div></div>
+        <div id="review-panel"><div class="empty-state"><div class="empty-state-icon">🎬</div><div class="empty-state-text">Select a clip to review</div></div></div>
+      </div>
+    </div>
+
+    <!-- ===== CREATORS ===== -->
+    <div id="section-creators" class="section">
+      <div class="section-title">👤 Creators</div>
+      <div class="section-sub">Manage content creators and rights</div>
+      <div class="flex mb-4" style="justify-content:flex-end">
+        <button class="btn btn-primary" onclick="openCreatorForm()">+ Add Creator</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Handle</th><th>Name</th><th>Platform</th><th>Status</th><th>Rights</th><th>Clips</th><th>Actions</th></tr></thead>
+          <tbody id="creators-tbody"><tr><td colspan="7"><div class="empty-state"><div class="spinner" style="margin:0 auto 8px"></div>Loading…</div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== AI MODELS ===== -->
+    <div id="section-models" class="section">
+      <div class="section-title">🤖 AI Models</div>
+      <div class="section-sub">Ollama integration and model management</div>
+      <div class="ollama-status" id="ollama-status"><div class="spinner"></div><span>Checking Ollama connection…</span></div>
+      <div class="row">
+        <div style="width:280px;flex-shrink:0">
+          <div class="card">
+            <div class="card-title"><span class="dot" style="background:var(--cyan)"></span> System Resources</div>
+            <div class="mb-4">
+              <div class="flex items-center gap-2" style="margin-bottom:6px">
+                <span style="font-size:12px;color:var(--text-dim)">GPU VRAM</span>
+                <span class="ml-auto" style="font-size:12px;color:var(--cyan)" id="vram-label">—</span>
+              </div>
+              <div class="usage-bar-wrap"><div class="usage-bar" id="vram-bar" style="background:var(--cyan);width:0%"></div></div>
+            </div>
+            <div>
+              <div class="flex items-center gap-2" style="margin-bottom:6px">
+                <span style="font-size:12px;color:var(--text-dim)">System RAM</span>
+                <span class="ml-auto" style="font-size:12px;color:var(--pink)" id="ram-label">—</span>
+              </div>
+              <div class="usage-bar-wrap"><div class="usage-bar" id="ram-bar" style="background:var(--pink);width:0%"></div></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><span class="dot" style="background:var(--pink)"></span> Model Selection</div>
+            <div class="form-group">
+              <label class="form-label">Reasoning Model</label>
+              <select class="form-control" id="reasoning-model-select"><option value="">Loading…</option></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Vision Model</label>
+              <select class="form-control" id="vision-model-select"><option value="">Loading…</option></select>
+            </div>
+            <button class="btn btn-primary" onclick="saveModelSelection()" style="width:100%;margin-bottom:10px">💾 Save Selection</button>
+            <button class="btn btn-red" onclick="evictModels()" style="width:100%">⚡ Unload All Models</button>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <div class="card-title"><span class="dot"></span> Installed Models</div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Name</th><th>Size</th><th>Modified</th><th>Status</th></tr></thead>
+                <tbody id="models-tbody"><tr><td colspan="4"><div class="empty-state"><div class="spinner" style="margin:0 auto 8px"></div>Loading…</div></td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== SETTINGS ===== -->
+    <div id="section-settings" class="section">
+      <div class="section-title">⚙️ Settings</div>
+      <div class="section-sub">Choose local or hosted AI models and configure an OpenAI-compatible API endpoint.</div>
+      <div class="card" style="max-width:900px">
+        <div class="card-title"><span class="dot"></span> AI Providers</div>
+        <div class="row" style="gap:16px;flex-wrap:wrap">
+          <div class="form-group col">
+            <label class="form-label" for="setting-reasoning-provider">Reasoning provider</label>
+            <select class="form-control" id="setting-reasoning-provider"><option value="ollama">Local Ollama</option><option value="openai_compatible">Cloud / OpenAI-compatible</option></select>
+          </div>
+          <div class="form-group col">
+            <label class="form-label" for="setting-vision-provider">Vision provider</label>
+            <select class="form-control" id="setting-vision-provider"><option value="ollama">Local Ollama</option><option value="openai_compatible">Cloud / OpenAI-compatible</option></select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="setting-cloud-url">API base URL</label>
+          <input class="form-control" id="setting-cloud-url" type="url" placeholder="https://api.openai.com/v1">
+          <div style="font-size:11px;color:var(--text-muted);margin-top:5px">Use the provider's OpenAI-compatible API base URL (for example OpenAI, OpenRouter, Groq, or Together).</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="setting-api-key">API key</label>
+          <input class="form-control" id="setting-api-key" type="password" autocomplete="new-password" placeholder="">
+          <div id="setting-key-status" style="font-size:11px;color:var(--text-muted);margin-top:5px">API key is stored encrypted on this Windows account and never shown after saving.</div>
+          <label style="font-size:12px;display:flex;align-items:center;gap:7px;margin-top:8px"><input id="setting-clear-key" type="checkbox"> Remove saved API key</label>
+        </div>
+        <div class="row" style="gap:16px;flex-wrap:wrap">
+          <div class="form-group col"><label class="form-label" for="setting-reasoning-model">Cloud reasoning model ID</label><input class="form-control" id="setting-reasoning-model" placeholder="e.g. gpt-4o-mini"></div>
+          <div class="form-group col"><label class="form-label" for="setting-vision-model">Cloud vision model ID</label><input class="form-control" id="setting-vision-model" placeholder="e.g. gpt-4o-mini"></div>
+        </div>
+        <div class="flex gap-3" style="flex-wrap:wrap;margin-top:8px">
+          <button class="btn btn-primary" onclick="saveAISettings()">💾 Save Settings</button>
+          <button class="btn btn-ghost" onclick="testAISettings()">🔌 Test Cloud Connection</button>
+          <span id="setting-test-status" style="font-size:12px;color:var(--text-dim);align-self:center"></span>
+        </div>
+      </div>
+      <div class="card" style="max-width:900px">
+        <div class="card-title"><span class="dot" style="background:var(--yellow)"></span> Clip Quality Defaults</div>
+        <div style="font-size:12px;color:var(--text-dim);line-height:1.7">Uploads require an active creator agreement. Review generated clips before export. Cloud model calls can send candidate transcripts and sampled video frames to the selected provider; choose local Ollama when footage must remain on this device.</div>
+      </div>
+    </div>
+
+    <!-- ===== ANALYTICS ===== -->
+    <div id="section-analytics" class="section">
+      <div class="section-title">📈 Analytics</div>
+      <div class="section-sub">Performance metrics and statistics</div>
+      <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:24px">
+        <div class="kpi-card" style="--accent:var(--cyan)"><div class="kpi-label">Videos Processed</div><div class="kpi-value" id="an-videos"><span class="spinner"></span></div></div>
+        <div class="kpi-card" style="--accent:var(--pink)"><div class="kpi-label">Clips Produced</div><div class="kpi-value" id="an-clips"><span class="spinner"></span></div></div>
+        <div class="kpi-card" style="--accent:var(--green)"><div class="kpi-label">Approval Rate</div><div class="kpi-value" id="an-rate"><span class="spinner"></span></div></div>
+        <div class="kpi-card" style="--accent:var(--yellow)"><div class="kpi-label">Avg Process Time</div><div class="kpi-value" id="an-time"><span class="spinner"></span></div></div>
+      </div>
+      <div class="row">
+        <div class="col">
+          <div class="card">
+            <div class="card-title"><span class="dot"></span> By Creator</div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Creator</th><th>Clips</th><th>Approved</th><th>Rejected</th><th>Approval %</th></tr></thead>
+                <tbody id="an-creators-tbody"><tr><td colspan="5"><div class="empty-state"><div class="spinner" style="margin:0 auto 8px"></div></div></td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="col">
+          <div class="card">
+            <div class="card-title"><span class="dot"></span> By Platform</div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Platform</th><th>Delivered</th></tr></thead>
+                <tbody id="an-platforms-tbody"><tr><td colspan="2"><div class="empty-state"><div class="spinner" style="margin:0 auto 8px"></div></div></td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /main -->
+</div><!-- /layout -->
+
+<!-- CLIP DETAIL MODAL -->
+<div id="modal-overlay" onclick="closeModal(event)">
+  <div id="modal">
+    <div id="modal-header">
+      <div style="font-family:'Chakra Petch',sans-serif;font-size:16px;font-weight:700" id="modal-title">Clip Detail</div>
+      <button id="modal-close" onclick="closeModalDirect()">✕</button>
+    </div>
+    <div id="modal-body">
+      <div><div class="phone-mockup" id="modal-phone"><div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:32px">🎬</div></div></div>
+      <div id="modal-details"></div>
+    </div>
+  </div>
+</div>
+
+<!-- CREATOR SLIDE-IN FORM -->
+<div id="creator-form-overlay" onclick="closeCreatorForm(event)">
+  <div id="creator-form-panel" onclick="event.stopPropagation()">
+    <div style="font-family:'Chakra Petch',sans-serif;font-size:16px;font-weight:700;margin-bottom:20px;color:var(--pink)" id="creator-form-title">Add Creator</div>
+    <input type="hidden" id="creator-edit-id">
+    <div class="form-group"><label class="form-label">Handle</label><input type="text" class="form-control" id="cf-handle" placeholder="@username"></div>
+    <div class="form-group"><label class="form-label">Name</label><input type="text" class="form-control" id="cf-name" placeholder="Full name"></div>
+    <div class="form-group"><label class="form-label">Channel URL</label><input type="url" class="form-control" id="cf-url" placeholder="https://…"></div>
+    <div class="form-group">
+      <label class="form-label">Platform</label>
+      <select class="form-control" id="cf-platform">
+        <option value="youtube">YouTube</option><option value="tiktok">TikTok</option>
+        <option value="instagram">Instagram</option><option value="twitch">Twitch</option><option value="other">Other</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">Content Restrictions</label><textarea class="form-control" id="cf-restrictions" placeholder="Any content restrictions…"></textarea></div>
+    <div class="form-group"><label class="form-label">Branding Guidelines</label><textarea class="form-control" id="cf-branding" placeholder="Branding guidelines…"></textarea></div>
+    <div class="form-group"><label class="form-label">Authorized Platforms</label><input type="text" class="form-control" id="cf-auth-platforms" placeholder="e.g. TikTok, Instagram"></div>
+    <div class="flex gap-3 mt-4">
+      <button class="btn btn-primary" onclick="saveCreator()" style="flex:1">💾 Save</button>
+      <button class="btn btn-ghost" onclick="closeCreatorFormDirect()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div id="toast-container"></div>
+
+<script>
+// ===== GLOBALS =====
+var sseSource = null;
+var currentMonitorJob = null;
+var reviewClips = [];
+var selectedReviewClip = null;
+var selectedClipIds = new Set();
+var _selectedFile = null;
+var _libDebounce = null;
+
+// ===== UTILS =====
+function fmt(n){ return n != null ? Number(n).toLocaleString() : '—'; }
+function fmtSize(bytes){
+  if(!bytes) return '—';
+  if(bytes < 1024) return bytes+' B';
+  if(bytes < 1048576) return (bytes/1024).toFixed(1)+' KB';
+  if(bytes < 1073741824) return (bytes/1048576).toFixed(1)+' MB';
+  return (bytes/1073741824).toFixed(2)+' GB';
+}
+function fmtDur(secs){
+  if(secs == null || secs === '') return '—';
+  secs = parseFloat(secs);
+  if(isNaN(secs)) return '—';
+  var h=Math.floor(secs/3600), m=Math.floor((secs%3600)/60), s=Math.floor(secs%60);
+  return h ? h+':'+pad(m)+':'+pad(s) : m+':'+pad(s);
+}
+function pad(n){ return String(n).padStart(2,'0'); }
+function timeAgo(ts){
+  if(!ts) return '';
+  var diff=(Date.now()-new Date(ts))/1000;
+  if(diff<60) return 'just now';
+  if(diff<3600) return Math.floor(diff/60)+'m ago';
+  if(diff<86400) return Math.floor(diff/3600)+'h ago';
+  return Math.floor(diff/86400)+'d ago';
+}
+function esc(s){
+  if(s==null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function debouncedLoadLibrary(){
+  clearTimeout(_libDebounce);
+  _libDebounce = setTimeout(loadLibrary, 400);
+}
+
+// ===== TOAST =====
+function showToast(msg, type, dur){
+  type = type||'info'; dur = dur||4000;
+  var icons={info:'ℹ️',success:'✅',error:'❌',warn:'⚠️'};
+  var c=document.getElementById('toast-container');
+  var t=document.createElement('div');
+  t.className='toast '+type;
+  t.innerHTML='<span class="toast-icon">'+icons[type]+'</span><span class="toast-msg">'+msg+'</span><button class="toast-close" onclick="this.parentElement.remove()">✕</button>';
+  c.appendChild(t);
+  setTimeout(function(){ t.style.opacity='0'; t.style.transition='opacity .2s'; }, dur-200);
+  setTimeout(function(){ t.remove(); }, dur);
+}
+
+// ===== API HELPER =====
+async function api(path, opts){
+  opts = opts||{};
+  try{
+    var fetchOpts={method:opts.method||'GET'};
+    if(opts.body && !(opts.body instanceof FormData)){
+      fetchOpts.headers={'Content-Type':'application/json'};
+      fetchOpts.body=JSON.stringify(opts.body);
+    } else if(opts.body){
+      fetchOpts.body=opts.body;
+    }
+    var r=await fetch(path,fetchOpts);
+    if(!r.ok){
+      var txt=await r.text().catch(function(){ return r.statusText; });
+      throw new Error(txt||'HTTP '+r.status);
+    }
+    return await r.json();
+  }catch(e){
+    showToast('API Error: '+e.message,'error');
+    throw e;
+  }
+}
+
+// ===== CLOCK =====
+function tickClock(){ document.getElementById('header-time').textContent=new Date().toLocaleTimeString('en-US',{hour12:false}); }
+setInterval(tickClock,1000); tickClock();
+
+// ===== SIDEBAR =====
+function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('open'); }
+
+// ===== SECTION SWITCHING =====
+function switchSection(name){
+  document.querySelectorAll('.section').forEach(function(s){ s.classList.remove('active'); });
+  document.querySelectorAll('.nav-item').forEach(function(n){ n.classList.remove('active'); });
+  var sec=document.getElementById('section-'+name);
+  var nav=document.querySelector('[data-section="'+name+'"]');
+  if(sec) sec.classList.add('active');
+  if(nav) nav.classList.add('active');
+  if(window.innerWidth<=640) document.getElementById('sidebar').classList.remove('open');
+  if(name==='overview') fetchOverview();
+  if(name==='upload') loadUploadCreators();
+  if(name==='queue') loadQueue();
+  if(name==='monitor') loadMonitorJobs();
+  if(name==='library'){ loadLibrary(); loadLibraryCreators(); }
+  if(name==='review') loadReview();
+  if(name==='creators') loadCreators();
+  if(name==='models') loadModels();
+  if(name==='settings') loadAISettings();
+  if(name==='analytics') loadAnalytics();
+}
+
+// ===== SSE =====
+function initSSE(){
+  if(sseSource){ sseSource.close(); }
+  var dot=document.getElementById('sse-dot');
+  var lbl=document.getElementById('sse-label');
+  try{
+    sseSource=new EventSource('/api/events');
+    sseSource.onopen=function(){ dot.classList.add('connected'); lbl.textContent='Live'; };
+    sseSource.onerror=function(){ dot.classList.remove('connected'); lbl.textContent='Reconnecting…'; setTimeout(initSSE,5000); };
+    sseSource.onmessage=function(e){ try{ handleSSE(JSON.parse(e.data)); }catch(err){} };
+    ['job_update','log_line','overview_update','clip_update'].forEach(function(type){
+      sseSource.addEventListener(type,function(e){ try{ var d=JSON.parse(e.data); d.type=type; handleSSE(d); }catch(err){} });
+    });
+  }catch(e){ setTimeout(initSSE,5000); }
+}
+
+function handleSSE(ev){
+  if(!ev||!ev.type) return;
+  if(ev.type==='job_update') updateQueueRow(ev);
+  else if(ev.type==='log_line') appendMonitorLog(ev);
+  else if(ev.type==='overview_update' && ev.data) applyOverview(ev.data);
+}
+
+// ===== OVERVIEW =====
+async function fetchOverview(){
+  try{ var d=await api('/api/overview'); applyOverview(d); }catch(e){}
+}
+function applyOverview(d){
+  function set(id,val){ var el=document.getElementById(id); if(el) el.textContent=(val!=null?fmt(val):'—'); }
+  set('kpi-total-videos',d.total_videos);
+  set('kpi-processing',d.processing);
+  set('kpi-completed',d.completed);
+  set('kpi-failed',d.failed);
+  set('kpi-total-clips',d.total_clips);
+  set('kpi-pending-review',d.pending_review);
+  set('kpi-approved',d.approved);
+  set('kpi-rejected',d.rejected);
+  var stor=document.getElementById('kpi-storage');
+  if(stor) stor.textContent=(d.storage_gb!=null?parseFloat(d.storage_gb).toFixed(2):'—');
+  renderActivity(d.recent_activity||[]);
+}
+function renderActivity(items){
+  var feed=document.getElementById('activity-feed');
+  if(!items.length){ feed.innerHTML='<div style="color:var(--text-muted);font-size:12px;padding:8px">No recent activity.</div>'; return; }
+  feed.innerHTML=items.map(function(a){
+    return '<div class="activity-item"><div class="activity-dot"></div><div>'+esc(a.message||a.description||JSON.stringify(a))+'</div><div class="activity-time">'+timeAgo(a.timestamp||a.created_at)+'</div></div>';
+  }).join('');
+}
+
+// ===== UPLOAD =====
+async function loadUploadCreators(){
+  try{
+    var list=await api('/api/upload/creators');
+    var sel=document.getElementById('upload-creator');
+    sel.innerHTML='<option value="">— Select creator —</option>'+list.map(function(c){
+      return '<option value="'+c.id+'" data-rights="'+(c.rights_status||'')+'">'+esc(c.handle)+' — '+esc(c.name||'')+'</option>';
+    }).join('');
+    sel.onchange=function(){
+      var opt=sel.options[sel.selectedIndex];
+      if(opt) showRights(opt.dataset.rights||'');
+    };
+  }catch(e){}
+}
+function showRights(status){
+  var fi=document.getElementById('fi-rights');
+  if(!fi) return;
+  if(status==='active') fi.innerHTML='<div class="rights-ok">✅ Rights Active</div>';
+  else if(status==='pending') fi.innerHTML='<div class="rights-pending">🟡 Rights Pending</div>';
+  else fi.innerHTML='<div class="rights-warn">❌ No Rights</div>';
+}
+function handleFileSelect(file){
+  if(!file) return;
+  _selectedFile=file;
+  document.getElementById('file-info').style.display='block';
+  document.getElementById('fi-name').textContent=file.name;
+  document.getElementById('fi-meta').textContent=fmtSize(file.size)+' · '+(file.type||'video');
+  var ti=document.getElementById('upload-title');
+  if(!ti.value) ti.value=file.name.replace(/\.[^.]+$/,'').replace(/[_-]/g,' ');
+}
+// Drag/drop
+(function(){
+  var dz=document.getElementById('drop-zone');
+  dz.addEventListener('dragover',function(e){ e.preventDefault(); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave',function(){ dz.classList.remove('dragover'); });
+  dz.addEventListener('drop',function(e){ e.preventDefault(); dz.classList.remove('dragover'); var f=e.dataTransfer.files[0]; if(f) handleFileSelect(f); });
+  dz.addEventListener('click',function(){ document.getElementById('file-input').click(); });
+})();
+
+function startUpload(){
+  if(!_selectedFile){ showToast('Please select a file first.','warn'); return; }
+  var creator=document.getElementById('upload-creator').value;
+  var title=document.getElementById('upload-title').value.trim();
+  if(!creator){ showToast('Please select a creator.','warn'); return; }
+  if(!title){ showToast('Please enter a title.','warn'); return; }
+  var fd=new FormData();
+  fd.append('file',_selectedFile);
+  fd.append('creator_id',creator);
+  fd.append('title',title);
+  var wrap=document.getElementById('upload-progress-wrap');
+  var bar=document.getElementById('upload-progress-bar');
+  var pct=document.getElementById('upload-progress-pct');
+  var btn=document.getElementById('upload-btn');
+  wrap.style.display='block'; btn.disabled=true;
+  var xhr=new XMLHttpRequest();
+  xhr.upload.onprogress=function(e){ if(e.lengthComputable){ var p=Math.round(e.loaded/e.total*100); bar.style.width=p+'%'; pct.textContent=p+'%'; } };
+  xhr.onload=function(){
+    btn.disabled=false;
+    if(xhr.status>=200&&xhr.status<300){
+      var res; try{ res=JSON.parse(xhr.responseText); }catch(e){ res={}; }
+      var re=document.getElementById('upload-result');
+      re.style.display='block';
+      re.innerHTML='✅ Upload successful! Job ID: <strong>'+(res.job_id||'N/A')+'</strong> &nbsp;<button class="btn btn-ghost btn-sm" onclick="switchSection(\'queue\')">View Queue →</button>';
+      showToast('Upload complete!','success');
+      _selectedFile=null;
+      document.getElementById('file-input').value='';
+    }else{
+      showToast('Upload failed: '+xhr.statusText,'error');
+      wrap.style.display='none';
+    }
+  };
+  xhr.onerror=function(){ btn.disabled=false; showToast('Upload failed: Network error','error'); };
+  xhr.open('POST','/api/upload');
+  xhr.send(fd);
+}
+
+// ===== QUEUE =====
+var queueData=[];
+async function loadQueue(){
+  try{
+    var jobs=await api('/api/queue');
+    queueData=jobs;
+    renderQueue(jobs);
+    var sel=document.getElementById('monitor-job-select');
+    if(sel) sel.innerHTML='<option value="">— choose a job —</option>'+jobs.map(function(j){
+      return '<option value="'+j.id+'">['+j.status+'] '+esc(j.title||j.id)+'</option>';
+    }).join('');
+  }catch(e){}
+}
+function renderQueue(jobs){
+  var tb=document.getElementById('queue-tbody');
+  if(!jobs.length){ tb.innerHTML='<tr><td colspan="10"><div class="empty-state"><div class="empty-state-icon">📭</div><div>No jobs in queue</div></div></td></tr>'; return; }
+  tb.innerHTML=jobs.map(queueRow).join('');
+}
+function queueRow(j){
+  var prog=j.progress||0, st=j.status||'queued';
+  return '<tr id="qrow-'+j.id+'"><td style="max-width:180px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(j.title||'')+'"><strong>'+esc(j.title||j.id)+'</strong></td>'
+    +'<td>'+esc(j.creator_handle||'—')+'</td>'
+    +'<td>'+fmtDur(j.duration)+'</td>'
+    +'<td style="max-width:140px;font-size:12px">'+esc(j.stage||'—')+'</td>'
+    +'<td><div class="progress-wrap"><div class="progress-bar '+st+'" style="width:'+prog+'%"></div></div><div style="font-size:10px;color:var(--text-muted);margin-top:2px">'+prog+'%</div></td>'
+    +'<td style="font-size:11px;color:var(--text-muted)">'+esc(j.current_model||'—')+'</td>'
+    +'<td style="font-size:11px;color:var(--text-muted)">'+timeAgo(j.started_at||j.created_at)+'</td>'
+    +'<td>'+(j.candidate_count||0)+'</td>'
+    +'<td>'+(j.clip_count||0)+'</td>'
+    +'<td><div class="flex gap-2" style="flex-wrap:wrap">'+getQueueActions(j)+'<span class="badge badge-'+st+'">'+st+'</span></div></td></tr>';
+}
+function getQueueActions(j){
+  var id=j.id, st=j.status, btns='';
+  if(st==='queued') btns+='<button class="btn btn-green btn-sm btn-icon" title="Start" onclick="queueAction(\'start\',\''+id+'\')">▶</button>';
+  if(st==='running') btns+='<button class="btn btn-ghost btn-sm btn-icon" title="Pause" onclick="queueAction(\'pause\',\''+id+'\')">⏸</button>';
+  if(st==='paused') btns+='<button class="btn btn-green btn-sm btn-icon" title="Resume" onclick="queueAction(\'resume\',\''+id+'\')">▶</button>';
+  if(st==='running'||st==='paused') btns+='<button class="btn btn-red btn-sm btn-icon" title="Cancel" onclick="queueAction(\'cancel\',\''+id+'\')">✕</button>';
+  if(st==='failed'||st==='cancelled') btns+='<button class="btn btn-cyan btn-sm btn-icon" title="Retry" onclick="queueAction(\'retry\',\''+id+'\')">🔄</button>';
+  if(st==='queued'||st==='failed'||st==='cancelled') btns+='<button class="btn btn-ghost btn-sm btn-icon" title="Delete" onclick="queueAction(\'delete\',\''+id+'\')">🗑</button>';
+  return btns;
+}
+async function queueAction(action, jobId){
+  try{
+    if(action==='delete') await api('/api/queue/'+jobId,{method:'DELETE'});
+    else await api('/api/queue/'+jobId+'/'+action,{method:'POST'});
+    showToast('Job '+action+' successful','success');
+    loadQueue();
+  }catch(e){}
+}
+function updateQueueRow(ev){
+  if(!ev.job_id) return;
+  var idx=queueData.findIndex(function(j){ return j.id==ev.job_id; });
+  if(idx>=0){
+    Object.assign(queueData[idx],ev);
+    var tr=document.getElementById('qrow-'+ev.job_id);
+    if(tr){ var tmp=document.createElement('tbody'); tmp.innerHTML=queueRow(queueData[idx]); tr.replaceWith(tmp.firstChild); }
+  }else{ loadQueue(); }
+}
+
+// ===== MONITOR =====
+var STAGES=[
+  {n:1,name:'Video Ingestion',icon:'📥'},
+  {n:2,name:'Metadata Extraction',icon:'📋'},
+  {n:3,name:'Audio Extraction',icon:'🔊'},
+  {n:4,name:'Transcription',icon:'📝'},
+  {n:5,name:'Audio Analysis',icon:'🎵'},
+  {n:6,name:'Scene Detection',icon:'🎬'},
+  {n:7,name:'Visual Frame Analysis',icon:'👁️'},
+  {n:8,name:'Highlight Discovery',icon:'⭐'},
+  {n:9,name:'AI Scoring',icon:'🤖'},
+  {n:10,name:'Clip Extraction',icon:'✂️'},
+  {n:11,name:'Subtitle Generation',icon:'💬'},
+  {n:12,name:'Rendering',icon:'🖥️'},
+  {n:13,name:'Quality Assurance',icon:'✅'},
+  {n:14,name:'Human Review',icon:'👤'}
+];
+async function loadMonitorJobs(){
+  try{
+    var jobs=await api('/api/queue');
+    var sel=document.getElementById('monitor-job-select');
+    sel.innerHTML='<option value="">— choose a job —</option>'+jobs.map(function(j){
+      return '<option value="'+j.id+'">['+j.status+'] '+esc(j.title||j.id)+'</option>';
+    }).join('');
+  }catch(e){}
+}
+async function loadMonitor(jobId){
+  if(!jobId) return;
+  currentMonitorJob=jobId;
+  renderStages({});
+  try{
+    var d=await api('/api/monitor/'+jobId);
+    renderStages(d.stage_states||{});
+    var terminal=document.getElementById('terminal');
+    terminal.innerHTML='';
+    var logs=d.stage_logs||[];
+    if(Array.isArray(logs)){ logs.forEach(function(l){ appendLog(typeof l==='string'?l:JSON.stringify(l)); }); }
+    else if(typeof logs==='object'){ Object.values(logs).forEach(function(g){ if(Array.isArray(g)) g.forEach(function(l){ appendLog(String(l)); }); else appendLog(String(g)); }); }
+  }catch(e){}
+}
+function renderStages(states){
+  var sl=document.getElementById('stage-list');
+  sl.innerHTML=STAGES.map(function(s){
+    var st=states[s.n]||states[s.name]||'pending';
+    var icon=(st==='completed'?'✓':st==='running'?'⟳':st==='failed'?'✕':'○');
+    return '<div class="pipeline-stage"><div class="stage-num '+st+'">'+icon+'</div><span class="stage-icon">'+s.icon+'</span><span class="stage-name">'+s.name+'</span><span class="badge badge-'+st+'" style="font-size:9px;padding:2px 6px">'+st+'</span></div>';
+  }).join('');
+}
+function appendMonitorLog(ev){
+  if(ev.job_id && ev.job_id!=currentMonitorJob) return;
+  appendLog(ev.message||ev.line||JSON.stringify(ev));
+}
+function appendLog(line){
+  var terminal=document.getElementById('terminal');
+  var div=document.createElement('div');
+  var l=String(line).toLowerCase();
+  div.className='log-line '+(l.includes('error')||l.includes('fail')?'error':l.includes('warn')?'warn':l.includes('success')||l.includes('complete')||l.includes('done')?'success':'info');
+  div.textContent=line;
+  terminal.appendChild(div);
+  terminal.scrollTop=terminal.scrollHeight;
+}
+
+// ===== LIBRARY =====
+async function loadLibraryCreators(){
+  try{
+    var list=await api('/api/creators');
+    var sel=document.getElementById('lib-creator');
+    sel.innerHTML='<option value="">All Creators</option>'+list.map(function(c){
+      return '<option value="'+c.id+'">'+esc(c.handle)+'</option>';
+    }).join('');
+  }catch(e){}
+}
+async function loadLibrary(){
+  var params=new URLSearchParams();
+  var search=document.getElementById('lib-search').value;
+  var creator=document.getElementById('lib-creator').value;
+  var status=document.getElementById('lib-status').value;
+  var score=document.getElementById('lib-score').value;
+  var dur=document.getElementById('lib-duration').value;
+  if(search) params.set('search',search);
+  if(creator) params.set('creator_id',creator);
+  if(status) params.set('status',status);
+  if(parseFloat(score)>0) params.set('min_score',score);
+  if(dur) params.set('max_duration',dur);
+  var grid=document.getElementById('clip-grid');
+  grid.innerHTML='<div style="grid-column:1/-1" class="empty-state"><div class="spinner" style="margin:0 auto 8px"></div>Loading…</div>';
+  try{
+    var clips=await api('/api/library?'+params.toString());
+    renderClipGrid(clips);
+  }catch(e){}
+}
+function renderClipGrid(clips){
+  var grid=document.getElementById('clip-grid');
+  if(!clips.length){ grid.innerHTML='<div style="grid-column:1/-1" class="empty-state"><div class="empty-state-icon">📭</div><div>No clips found</div></div>'; return; }
+  grid.innerHTML=clips.map(function(c){
+    return '<div class="clip-card" onclick="openClipModal('+c.id+')">'
+      +'<div class="clip-thumb">'+(c.thumbnail_path?'<img src="/thumb/'+c.id+'" alt="thumb" onerror="this.style.display=\'none\'">':'')
+      +'<div class="clip-thumb-placeholder">🎬</div></div>'
+      +'<div class="clip-info">'
+      +'<div class="clip-title" title="'+esc(c.title||'')+'">'
+      +(c.hook_text?'<span class="badge" style="background:rgba(255,42,133,.15);color:var(--pink);font-size:9px;margin-right:4px">HOOK</span>':'')+esc(c.title||'Untitled')+'</div>'
+      +'<div class="clip-scores">'
+      +'<div class="score-pill score-viral">🔥 '+(c.virality_score||0).toFixed(1)+'</div>'
+      +'<div class="score-pill score-humor">😂 '+(c.humor_score||0).toFixed(1)+'</div>'
+      +'<div class="score-pill score-action">⚡ '+(c.action_score||0).toFixed(1)+'</div>'
+      +'</div>'
+      +'<div class="clip-meta"><span class="badge badge-'+(c.status||'pending')+'">'+(c.status||'pending')+'</span><span>'+fmtDur(c.duration_seconds)+' · '+esc(c.creator_handle||'')+'</span></div>'
+      +'</div></div>';
+  }).join('');
+}
+async function openClipModal(id){
+  var overlay=document.getElementById('modal-overlay');
+  var phone=document.getElementById('modal-phone');
+  var details=document.getElementById('modal-details');
+  overlay.classList.add('open');
+  details.innerHTML='<div class="spinner"></div>';
+  try{
+    var clips=await api('/api/library');
+    var c=clips.find(function(x){ return x.id==id; });
+    if(!c){ details.innerHTML='<div>Clip not found</div>'; return; }
+    document.getElementById('modal-title').textContent=c.title||'Clip Detail';
+    phone.innerHTML='<video controls src="/video/'+id+'" style="width:100%;height:100%;object-fit:cover" onerror="this.outerHTML=\'<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:32px&quot;>🎬</div>\'"></video>';
+    details.innerHTML='<div>'
+      +'<div class="form-group"><div class="form-label">Title</div><div style="font-size:15px;font-weight:600">'+esc(c.title||'—')+'</div></div>'
+      +(c.hook_text?'<div class="form-group"><div class="form-label">Hook</div><div>'+esc(c.hook_text)+'</div></div>':'')
+      +(c.highlight_description?'<div class="form-group"><div class="form-label">Highlight</div><div style="font-size:13px;color:var(--text-dim)">'+esc(c.highlight_description)+'</div></div>':'')
+      +(c.subtitle_text?'<div class="form-group"><div class="form-label">Subtitles</div><div style="font-size:12px;color:var(--text-dim);font-style:italic">"'+esc(c.subtitle_text)+'"</div></div>':'')
+      +'<div class="form-group"><div class="form-label">Timestamps</div><div style="font-size:13px">'+fmtDur(c.optimal_start)+' → '+fmtDur(c.optimal_end)+'</div></div>'
+      +(c.export_path?'<div class="form-group"><div class="form-label">Export Path</div><div style="font-size:11px;color:var(--text-muted);word-break:break-all">'+esc(c.export_path)+'</div></div>':'')
+      +'<div class="flex gap-3 mt-4">'
+      +(c.status!=='approved'?'<button class="btn btn-green" onclick="modalAction(\'approve\','+id+')">✓ Approve</button>':'')
+      +(c.status!=='rejected'?'<button class="btn btn-red" onclick="modalAction(\'reject\','+id+')">✕ Reject</button>':'')
+      +'<button class="btn btn-ghost" onclick="closeModalDirect();switchSection(\'review\')">✏️ Edit</button>'
+      +'</div>'
+      +'<div class="flex gap-3" style="margin-top:8px"><div class="badge badge-'+(c.status||'pending')+'">'+(c.status||'pending')+'</div>'
+      +'<span style="font-size:12px;color:var(--text-muted)">'+esc(c.creator_handle||'')+' · '+fmtDur(c.duration_seconds)+'</span></div>'
+      +'</div>';
+  }catch(e){}
+}
+async function modalAction(action, id){
+  var body={};
+  if(action==='reject'){ var reason=prompt('Reason for rejection:'); if(reason===null) return; body.reason=reason; }
+  try{
+    await api('/api/clips/'+id+'/'+action,{method:'POST',body:body});
+    showToast('Clip '+action+'d successfully','success');
+    closeModalDirect();
+    if(document.getElementById('section-library').classList.contains('active')) loadLibrary();
+    if(document.getElementById('section-review').classList.contains('active')) loadReview();
+  }catch(e){}
+}
+function closeModal(e){ if(e.target===document.getElementById('modal-overlay')) closeModalDirect(); }
+function closeModalDirect(){ document.getElementById('modal-overlay').classList.remove('open'); }
+
+// ===== REVIEW =====
+async function loadReview(){
+  var filter=document.getElementById('review-filter').value;
+  var params=filter?'?status='+filter:'';
+  try{
+    var clips=await api('/api/clips'+params);
+    reviewClips=clips;
+    renderReviewList(clips);
+  }catch(e){}
+}
+function renderReviewList(clips){
+  var list=document.getElementById('review-list');
+  if(!clips.length){ list.innerHTML='<div class="empty-state" style="padding:24px;font-size:12px"><div class="empty-state-icon">📭</div><div>No clips</div></div>'; return; }
+  list.innerHTML=clips.map(function(c){
+    var sel=selectedReviewClip&&selectedReviewClip.id==c.id;
+    return '<div class="review-item'+(sel?' selected':'')+'" onclick="selectReviewClip('+c.id+')">'
+      +'<input type="checkbox" class="review-checkbox" onclick="event.stopPropagation();toggleClipSelect('+c.id+',this.checked)"'+(selectedClipIds.has(c.id)?' checked':'')+'>'
+      +'<div><div class="review-item-title">'+esc(c.title||'Untitled')+'</div>'
+      +'<div class="review-item-sub"><span class="badge badge-'+(c.status||'pending')+'" style="font-size:9px">'+(c.status||'pending')+'</span>'
+      +' <span style="margin-left:6px">'+esc(c.creator_handle||'')+'</span></div></div></div>';
+  }).join('');
+}
+function toggleClipSelect(id,checked){
+  if(checked) selectedClipIds.add(id); else selectedClipIds.delete(id);
+  var bar=document.getElementById('bulk-bar');
+  var cnt=document.getElementById('selected-count');
+  if(selectedClipIds.size>0){ bar.style.display='flex'; cnt.textContent=selectedClipIds.size+' selected'; }
+  else bar.style.display='none';
+}
+function selectReviewClip(id){
+  var clip=reviewClips.find(function(c){ return c.id==id; });
+  if(!clip) return;
+  selectedReviewClip=clip;
+  renderReviewList(reviewClips);
+  renderReviewPanel(clip);
+}
+function renderReviewPanel(c){
+  var panel=document.getElementById('review-panel');
+  panel.innerHTML='<div class="row" style="gap:24px;flex-wrap:wrap">'
+    +'<div><div class="phone-mockup">'
+    +'<video controls src="/video/'+c.id+'" style="width:100%;height:100%;object-fit:cover"></video>'
+    +'</div></div>'
+    +'<div style="flex:1;min-width:200px">'
+    +'<div class="form-group"><label class="form-label">Title</label><input type="text" class="form-control" id="rv-title" value="'+esc(c.title||'')+'"></div>'
+    +'<div class="form-group"><label class="form-label">Hook</label><input type="text" class="form-control" id="rv-hook" value="'+esc(c.hook_text||'')+'"></div>'
+    +'<div class="form-group"><label class="form-label">Subtitle Text</label><textarea class="form-control" id="rv-subtitle" rows="3">'+esc(c.subtitle_text||'')+'</textarea></div>'
+    +'<div class="row" style="gap:12px">'
+    +'<div class="col form-group"><label class="form-label">Start (s)</label><input type="number" class="form-control" id="rv-start" value="'+(c.optimal_start||0)+'" step="0.1"></div>'
+    +'<div class="col form-group"><label class="form-label">End (s)</label><input type="number" class="form-control" id="rv-end" value="'+(c.optimal_end||0)+'" step="0.1"></div>'
+    +'<div class="col form-group"><label class="form-label">Layout</label><select class="form-control" id="rv-layout">'
+    +'<option value="vertical"'+(c.layout_mode==='vertical'?' selected':'')+'>Vertical</option>'
+    +'<option value="horizontal"'+(c.layout_mode==='horizontal'?' selected':'')+'>Horizontal</option>'
+    +'<option value="square"'+(c.layout_mode==='square'?' selected':'')+'>Square</option>'
+    +'</select></div></div>'
+    +'<div class="flex gap-3" style="flex-wrap:wrap;margin-top:8px">'
+    +'<button class="btn btn-ghost" id="rv-rerender-btn" onclick="rerenderClip('+c.id+')">🔄 Re-render</button>'
+    +'<button class="btn btn-ghost" onclick="saveClipEdits('+c.id+')">💾 Save</button>'
+    +'<button class="btn btn-green" onclick="reviewAction(\'approve\','+c.id+')">✓ Approve</button>'
+    +'<button class="btn btn-red" onclick="reviewAction(\'reject\','+c.id+')">✕ Reject</button>'
+    +'</div>'
+    +'<div id="rv-spinner" style="display:none;margin-top:12px;text-align:center"><div class="spinner" style="margin:0 auto 6px"></div><div style="font-size:12px;color:var(--text-muted)">Re-rendering…</div></div>'
+    +'</div></div>';
+}
+async function saveClipEdits(id){
+  var body={
+    title:document.getElementById('rv-title').value,
+    hook_text:document.getElementById('rv-hook').value,
+    subtitle_text:document.getElementById('rv-subtitle').value,
+    optimal_start:parseFloat(document.getElementById('rv-start').value)||0,
+    optimal_end:parseFloat(document.getElementById('rv-end').value)||0,
+    layout_mode:document.getElementById('rv-layout').value
+  };
+  try{ await api('/api/clips/'+id,{method:'PUT',body:body}); showToast('Clip saved','success'); }catch(e){}
+}
+async function rerenderClip(id){
+  var btn=document.getElementById('rv-rerender-btn');
+  var sp=document.getElementById('rv-spinner');
+  btn.disabled=true; sp.style.display='block';
+  var body={
+    start:parseFloat(document.getElementById('rv-start').value)||0,
+    end:parseFloat(document.getElementById('rv-end').value)||0,
+    layout:document.getElementById('rv-layout').value
+  };
+  try{ await api('/api/clips/'+id+'/rerender',{method:'POST',body:body}); showToast('Re-render started','info'); }catch(e){}
+  btn.disabled=false; sp.style.display='none';
+}
+async function reviewAction(action, id){
+  var body={};
+  if(action==='reject'){ var reason=prompt('Reason for rejection:'); if(reason===null) return; body.reason=reason; }
+  try{
+    await api('/api/clips/'+id+'/'+action,{method:'POST',body:body});
+    showToast('Clip '+action+'d','success');
+    selectedReviewClip=null;
+    loadReview();
+  }catch(e){}
+}
+async function bulkApprove(){
+  if(!selectedClipIds.size) return;
+  try{
+    var res=await api('/api/clips/bulk-approve',{method:'POST',body:{clip_ids:[...selectedClipIds]}});
+    showToast('Approved '+(res.approved||selectedClipIds.size)+' clips','success');
+    selectedClipIds.clear();
+    document.getElementById('bulk-bar').style.display='none';
+    loadReview();
+  }catch(e){}
+}
+
+// ===== CREATORS =====
+async function loadCreators(){
+  try{
+    var list=await api('/api/creators');
+    renderCreators(list);
+  }catch(e){}
+}
+function renderCreators(creators){
+  var tb=document.getElementById('creators-tbody');
+  if(!creators.length){ tb.innerHTML='<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">👤</div><div>No creators</div></div></td></tr>'; return; }
+  var rightsMap={active:'🟢 Active',none:'🔴 None',pending:'🟡 Pending'};
+  tb.innerHTML=creators.map(function(c){
+    var rights=rightsMap[c.rights_status]||('🔵 '+(c.rights_status||'—'));
+    return '<tr><td><strong>'+esc(c.handle)+'</strong></td><td>'+esc(c.name||'—')+'</td><td>'+esc(c.platform||'—')+'</td>'
+      +'<td><span class="badge badge-'+(c.status==='active'?'approved':'queued')+'">'+(c.status||'active')+'</span></td>'
+      +'<td>'+rights+'</td><td>'+(c.clip_count||0)+'</td>'
+      +'<td><div class="flex gap-2">'
+      +'<button class="btn btn-ghost btn-sm" onclick="editCreator('+c.id+')">✏️ Edit</button>'
+      +'<button class="btn btn-red btn-sm" onclick="deleteCreator('+c.id+')">🗑</button>'
+      +'</div></td></tr>';
+  }).join('');
+}
+function openCreatorForm(){
+  document.getElementById('creator-form-title').textContent='Add Creator';
+  document.getElementById('creator-edit-id').value='';
+  ['cf-handle','cf-name','cf-url','cf-restrictions','cf-branding','cf-auth-platforms'].forEach(function(id){ document.getElementById(id).value=''; });
+  document.getElementById('cf-platform').value='youtube';
+  document.getElementById('creator-form-overlay').classList.add('open');
+}
+async function editCreator(id){
+  try{
+    var list=await api('/api/creators');
+    var c=list.find(function(x){ return x.id==id; });
+    if(!c) return;
+    document.getElementById('creator-form-title').textContent='Edit Creator';
+    document.getElementById('creator-edit-id').value=id;
+    document.getElementById('cf-handle').value=c.handle||'';
+    document.getElementById('cf-name').value=c.name||'';
+    document.getElementById('cf-url').value=c.channel_url||'';
+    document.getElementById('cf-platform').value=c.platform||'youtube';
+    document.getElementById('cf-restrictions').value=c.content_restrictions||'';
+    document.getElementById('cf-branding').value=c.branding_guidelines||'';
+    document.getElementById('cf-auth-platforms').value=c.authorized_platforms||'';
+    document.getElementById('creator-form-overlay').classList.add('open');
+  }catch(e){}
+}
+async function saveCreator(){
+  var id=document.getElementById('creator-edit-id').value;
+  var body={
+    handle:document.getElementById('cf-handle').value.trim(),
+    name:document.getElementById('cf-name').value.trim(),
+    channel_url:document.getElementById('cf-url').value.trim(),
+    platform:document.getElementById('cf-platform').value,
+    content_restrictions:document.getElementById('cf-restrictions').value,
+    branding_guidelines:document.getElementById('cf-branding').value,
+    authorized_platforms:document.getElementById('cf-auth-platforms').value
+  };
+  if(!body.handle){ showToast('Handle is required','warn'); return; }
+  try{
+    if(id) await api('/api/creators/'+id,{method:'PUT',body:body});
+    else await api('/api/creators',{method:'POST',body:body});
+    showToast('Creator '+(id?'updated':'created'),'success');
+    closeCreatorFormDirect();
+    loadCreators();
+  }catch(e){}
+}
+async function deleteCreator(id){
+  if(!confirm('Delete this creator? This cannot be undone.')) return;
+  try{ await api('/api/creators/'+id,{method:'DELETE'}); showToast('Creator deleted','success'); loadCreators(); }catch(e){}
+}
+function closeCreatorForm(e){ if(e.target===document.getElementById('creator-form-overlay')) closeCreatorFormDirect(); }
+function closeCreatorFormDirect(){ document.getElementById('creator-form-overlay').classList.remove('open'); }
+
+// ===== AI MODELS =====
+async function loadModels(){
+  try{
+    var d=await api('/api/models');
+    var os=document.getElementById('ollama-status');
+    if(d.ollama_connected){
+      os.innerHTML='<span style="color:var(--green);font-size:18px">●</span> <span>Ollama connected — <strong>'+(d.ollama_version||'')+'</strong></span>';
+      os.style.borderLeftColor='var(--green)';
+    }else{
+      os.innerHTML='<span style="color:var(--red);font-size:18px">●</span> <span style="color:var(--red)">Ollama not reachable</span>';
+      os.style.borderLeftColor='var(--red)';
+    }
+    if(d.gpu_vram_used_mb!=null&&d.gpu_vram_total_mb){
+      var vp=Math.round(d.gpu_vram_used_mb/d.gpu_vram_total_mb*100);
+      document.getElementById('vram-label').textContent=d.gpu_vram_used_mb+' / '+d.gpu_vram_total_mb+' MB';
+      document.getElementById('vram-bar').style.width=vp+'%';
+    }else document.getElementById('vram-label').textContent='N/A';
+    if(d.ram_used_gb!=null&&d.ram_total_gb){
+      var rp=Math.round(d.ram_used_gb/d.ram_total_gb*100);
+      document.getElementById('ram-label').textContent=parseFloat(d.ram_used_gb).toFixed(1)+' / '+parseFloat(d.ram_total_gb).toFixed(1)+' GB';
+      document.getElementById('ram-bar').style.width=rp+'%';
+    }else document.getElementById('ram-label').textContent='N/A';
+    var models=d.models||d.available_models||[], loaded=d.loaded_model||'';
+    var tb=document.getElementById('models-tbody');
+    if(!models.length){ tb.innerHTML='<tr><td colspan="4" class="empty-state">No models installed</td></tr>'; }
+    else tb.innerHTML=models.map(function(m){
+      var isL=m.name===loaded;
+      return '<tr class="'+(isL?'model-row loaded':'')+'">'
+        +'<td>'+esc(m.name)+(isL?' <span class="badge badge-running" style="font-size:9px">LOADED</span>':'')+'</td>'
+        +'<td>'+fmtSize(m.size)+'</td>'
+        +'<td style="font-size:11px;color:var(--text-muted)">'+(m.modified_at?new Date(m.modified_at).toLocaleDateString():'—')+'</td>'
+        +'<td>'+(isL?'<span style="color:var(--cyan);font-size:12px">▶ Active</span>':'<span style="color:var(--text-muted);font-size:12px">Idle</span>')+'</td></tr>';
+    }).join('');
+    var names=models.map(function(m){ return m.name; });
+    var curR=d.active_reasoning_model||d.reasoning_model||'', curV=d.active_vision_model||d.vision_model||'';
+    function opts(cur){ return '<option value="">— none —</option>'+names.map(function(n){ return '<option value="'+n+'"'+(n===cur?' selected':'')+'>'+esc(n)+'</option>'; }).join(''); }
+    document.getElementById('reasoning-model-select').innerHTML=opts(curR);
+    document.getElementById('vision-model-select').innerHTML=opts(curV);
+  }catch(e){}
+}
+async function loadAISettings(){
+  try{
+    var d=await api('/api/settings/ai');
+    document.getElementById('setting-reasoning-provider').value=d.reasoning_provider||'ollama';
+    document.getElementById('setting-vision-provider').value=d.vision_provider||'ollama';
+    document.getElementById('setting-cloud-url').value=d.cloud_base_url||'https://api.openai.com/v1';
+    document.getElementById('setting-reasoning-model').value=d.cloud_reasoning_model||'';
+    document.getElementById('setting-vision-model').value=d.cloud_vision_model||'';
+    document.getElementById('setting-api-key').value='';
+    document.getElementById('setting-api-key').placeholder=d.api_key_configured?'Saved securely — leave blank to keep it':'Paste API key';
+    document.getElementById('setting-key-status').textContent=d.api_key_configured?'A key is saved encrypted on this Windows account. Leave blank to keep it.':'No API key saved.';
+    document.getElementById('setting-clear-key').checked=false;
+  }catch(e){}
+}
+async function saveAISettings(){
+  var status=document.getElementById('setting-test-status');
+  var body={
+    reasoning_provider:document.getElementById('setting-reasoning-provider').value,
+    vision_provider:document.getElementById('setting-vision-provider').value,
+    cloud_base_url:document.getElementById('setting-cloud-url').value.trim(),
+    cloud_api_key:document.getElementById('setting-api-key').value,
+    clear_api_key:document.getElementById('setting-clear-key').checked,
+    cloud_reasoning_model:document.getElementById('setting-reasoning-model').value.trim(),
+    cloud_vision_model:document.getElementById('setting-vision-model').value.trim()
+  };
+  try{ await api('/api/settings/ai',{method:'PUT',body:body}); showToast('AI settings saved','success'); status.textContent=''; loadAISettings(); loadModels(); }
+  catch(e){ status.textContent='Settings could not be saved.'; }
+}
+async function testAISettings(){
+  var status=document.getElementById('setting-test-status');
+  status.textContent='Checking endpoint…';
+  var body={cloud_base_url:document.getElementById('setting-cloud-url').value.trim(),cloud_api_key:document.getElementById('setting-api-key').value};
+  try{
+    var d=await api('/api/settings/ai/test',{method:'POST',body:body});
+    status.textContent='Connected — '+d.model_count+' model(s) available.';
+    status.style.color='var(--green)';
+  }catch(e){ status.textContent='Could not connect. Check endpoint and key.'; status.style.color='var(--red)'; }
+}
+async function saveModelSelection(){
+  var body={reasoning_model:document.getElementById('reasoning-model-select').value,vision_model:document.getElementById('vision-model-select').value};
+  try{ await api('/api/models/select',{method:'POST',body:body}); showToast('Model selection saved','success'); }catch(e){}
+}
+async function evictModels(){
+  if(!confirm('Unload all models from VRAM? This will stop any active processing.')) return;
+  try{ await api('/api/models/evict',{method:'POST'}); showToast('All models unloaded','success'); loadModels(); }catch(e){}
+}
+
+// ===== ANALYTICS =====
+async function loadAnalytics(){
+  try{
+    var d=await api('/api/analytics');
+    document.getElementById('an-videos').textContent=fmt(d.videos_processed);
+    document.getElementById('an-clips').textContent=fmt(d.clips_produced);
+    document.getElementById('an-rate').textContent=d.approval_rate!=null?parseFloat(d.approval_rate).toFixed(1)+'%':'—';
+    document.getElementById('an-time').textContent=d.avg_processing_time?fmtDur(d.avg_processing_time):'—';
+    var ctb=document.getElementById('an-creators-tbody');
+    var byC=d.by_creator||[];
+    ctb.innerHTML=byC.length?byC.map(function(r){
+      return '<tr><td>'+esc(r.creator||'—')+'</td><td>'+fmt(r.clips)+'</td><td>'+fmt(r.approved)+'</td><td>'+fmt(r.rejected)+'</td><td>'+(r.approval_pct!=null?parseFloat(r.approval_pct).toFixed(1)+'%':'—')+'</td></tr>';
+    }).join(''):'<tr><td colspan="5" class="empty-state">No data</td></tr>';
+    var ptb=document.getElementById('an-platforms-tbody');
+    var byP=d.by_platform||[];
+    ptb.innerHTML=byP.length?byP.map(function(r){
+      return '<tr><td>'+esc(r.platform||'—')+'</td><td>'+fmt(r.delivered)+'</td></tr>';
+    }).join(''):'<tr><td colspan="2" class="empty-state">No data</td></tr>';
+  }catch(e){}
+}
+
+// ===== INIT =====
+window.addEventListener('DOMContentLoaded',function(){
+  fetchOverview();
+  initSSE();
+  setInterval(fetchOverview,10000);
+});
+</script>
+</body>
+</html>
