@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -49,13 +50,31 @@ def generate(
     }
     if json_format:
         payload["response_format"] = {"type": "json_object"}
-    response = httpx.post(
-        _endpoint(base_url, "chat/completions"),
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json=payload,
-        timeout=timeout,
-    )
-    response.raise_for_status()
+    response = None
+    for attempt in range(3):
+        try:
+            response = httpx.post(
+                _endpoint(base_url, "chat/completions"),
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=payload,
+                timeout=timeout,
+            )
+            if response.status_code == 429 or response.status_code >= 500:
+                if attempt < 2:
+                    try:
+                        delay = float(response.headers.get("retry-after", ""))
+                    except ValueError:
+                        delay = 0.0
+                    time.sleep(min(max(delay, 2 ** attempt), 20))
+                    continue
+            response.raise_for_status()
+            break
+        except (httpx.TimeoutException, httpx.NetworkError):
+            if attempt >= 2:
+                raise
+            time.sleep(2 ** attempt)
+    if response is None:
+        raise RuntimeError("Cloud provider did not return a response.")
     result = response.json()
     text = result["choices"][0]["message"]["content"]
     if isinstance(text, list):

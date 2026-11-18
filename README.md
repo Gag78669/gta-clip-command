@@ -14,11 +14,12 @@ The application keeps source media, its SQLite database, model settings, and exp
 - A browser dashboard for upload, queue monitoring, creator management, clip review, and approval.
 - Per-creator rights management with archived permission documents and agreement history.
 - Live queue progress and pipeline stage logs, plus a Library for previewing generated clips.
-- Windows DPAPI encryption for API keys saved through Settings.
+- Windows DPAPI encryption for locally saved cloud keys; Fernet encryption with a server-managed key for hosted per-account API keys.
+- Optional hosted account mode with email verification, private account data, a daily free processing allowance, and direct-to-object-storage uploads.
 
 ## Requirements
 
-- Windows 10 or 11 (the current API-key encryption uses Windows DPAPI).
+- Windows 10 or 11 for the local desktop-oriented setup (local API-key encryption uses Windows DPAPI; hosted API keys use Fernet).
 - Python 3.12.
 - FFmpeg and FFprobe available on `PATH`, or set `FFMPEG_BIN` and `FFPROBE_BIN` in `.env`.
 - Ollama for local AI inference. The default models are `qwen3:8b` for reasoning and `qwen3.5:4b` for vision; install them with `ollama pull qwen3:8b` and `ollama pull qwen3.5:4b`.
@@ -101,7 +102,41 @@ The dashboard server runs without automatic Python code reload. After pulling co
 
 ### Optional hosted models
 
-Open **Settings**, select an OpenAI-compatible provider for reasoning and/or vision, enter its API base URL and model IDs, then test and save the connection. The API key is encrypted for the current Windows account and is not returned to the browser after saving. Keep the key blank to retain an existing one. Hosted inference sends the relevant transcript and, for vision, sampled frames to the configured provider.
+Open **Settings**, select an OpenAI-compatible provider for reasoning and/or vision, enter its API base URL and model IDs, then test and save the connection. The test checks authentication and makes a minimal inference call for each selected model. For Groq, use `https://api.groq.com/openai/v1`. Locally, a user-supplied key is protected with Windows DPAPI; hosted account keys are encrypted with `CLOUD_KEY_ENCRYPTION_KEY`. Neither key is returned to the browser. Keep the key blank to retain a saved user key. Hosted inference sends the relevant transcript and, for vision, sampled frames to the configured provider.
+
+## Hosted deployment: Vercel frontend and Render services
+
+The repository includes a Vercel static frontend build and a Render Blueprint for the API, worker, PostgreSQL database, and Redis-compatible queue. The hosted configuration also needs an S3-compatible object-storage bucket (for example, AWS S3 or Cloudflare R2) and an SMTP account. Render's local filesystem is ephemeral, so source footage, generated clips, thumbnails, and rights documents are stored in object storage. Large video bytes go directly from the browser to that storage; the Vercel function proxy only handles API requests and media redirects.
+
+### 1. Configure Render
+
+Create a Render Blueprint from `render.yaml`. It defines the FastAPI web service, a separate background worker, PostgreSQL, and Key Value. The Blueprint generates one shared `CLOUD_KEY_ENCRYPTION_KEY`; keep it unchanged across deploys and backups. The API and worker each prompt for storage credentials, and the API prompts for SMTP credentials. Enter the same storage credentials for both services. Update `FRONTEND_ORIGIN` in the shared environment group after Vercel assigns the final hostname:
+
+- `FRONTEND_ORIGIN`: the deployed Vercel origin, such as `https://your-project.vercel.app`.
+- `CLOUD_KEY_ENCRYPTION_KEY`: the Blueprint generates this once. For manual setup, generate it with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Keep the same key across deploys and backups; changing it makes already-stored user keys unreadable.
+- `GROQ_API_KEY`: optional platform-owned key; enter the same value for the API and worker. Leave empty to require users to provide their own key in Settings.
+- `STORAGE_BUCKET`, `STORAGE_ENDPOINT_URL`, `STORAGE_ACCESS_KEY`, `STORAGE_SECRET_KEY`, and `STORAGE_REGION`: credentials for your S3-compatible bucket. Set the bucket's CORS policy to allow `PUT` from the Vercel origin, `AllowedHeaders: *`, and expose `ETag` if required by the storage provider.
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, and `SMTP_FROM`: used to send account verification email.
+
+The API fails startup when required hosted services are missing. The Render services install the pinned Python runtime from `.python-version` and FFmpeg/FFprobe using `apt.txt`. The Blueprint uses a 2 GB API plan and a 4 GB worker plan because media processing and local transcription still need CPU and memory. A GPU is not expected in the hosted worker; model inference uses the configured cloud provider.
+
+### 2. Configure Vercel
+
+Import this repository as a Vercel project, leave the project root at the repository root, and set `API_ORIGIN` to the Render API's public HTTPS URL (no trailing slash). `vercel.json` builds `frontend_dist/` and routes the API, video, and thumbnail paths through a same-origin proxy so the browser's HTTP-only account cookie remains first-party. Direct storage uploads go from the browser to the signed S3 URL and do not pass through Vercel. Configure the storage bucket's CORS `AllowedOrigins` to the final Vercel project/custom-domain origin.
+
+### 3. Accounts, keys, and free usage
+
+Hosted mode enables public signup. New users must verify their email before sign-in. Sessions use random tokens stored server-side as hashes and are sent in Secure, HttpOnly cookies. The database applies account ownership filters to creators, agreements, media, jobs, clips, and settings.
+
+Each account receives 1,200 seconds of processing time per UTC day. Each source video is limited to 600 seconds, measured server-side with FFprobe. Accepted jobs reserve their measured duration immediately to prevent concurrent uploads from bypassing the allowance. The reservation is consumed once processing reaches AI/transcription work, or on successful completion; failures and cancellations before that stage release it. Failed jobs that used the AI stage remain charged and need an available allowance to retry. The account badge shows remaining minutes for the current UTC day.
+
+Users may save their own OpenAI-compatible provider key in Settings, encrypted with the hosted Fernet key. If `GROQ_API_KEY` is set, it is available as a platform key when a user has not saved a personal key. Provider quotas are shared at the Groq account/project level, so the app's per-account time limit cannot guarantee that provider rate limits will never be reached. Requests handle transient 429 and 5xx responses with bounded retries.
+
+### 4. Verify the deployment
+
+After both providers report healthy, create an account, verify its email, and sign in. In Settings, select Groq (or another OpenAI-compatible endpoint), provide at least one model ID, and run **Test Cloud Connection**. The test calls `/models`, then runs minimal text and/or image inference for the chosen model IDs. Upload one short test video, start its queue job, verify it completes, and open its generated clip. Confirm a video longer than 10 minutes is rejected and that the displayed daily allowance drops by the duration of an accepted job.
+
+Do not put API keys, database URLs, SMTP credentials, or storage credentials into the repository or Vercel static files. Configure secrets in Render's environment settings; only `API_ORIGIN` belongs in Vercel's server-side environment.
 
 ## Tests
 
@@ -119,13 +154,14 @@ The following items are local runtime data and are intentionally ignored by Git:
 configs/                 Optional local configuration
 data/                    Local database, agreements, footage, caches, and exports (gitignored)
 scripts/                 Database, creator registration, pipeline, and dashboard entry points
-src/core/                 Settings, database models, migrations, and logging
+src/core/                 Settings, database models, migrations, account/quota helpers, storage, and logging
 src/ingestion/            Media inspection, audio extraction, rights checks
 src/signals/               Audio, transcription, and scene analysis
 src/fusion/                Candidate highlight matching
 src/reasoning/             Ollama and OpenAI-compatible model clients
 src/composer/              Vertical framing, subtitles, and rendering
 src/qa/                    Export validation
-src/dashboard/             FastAPI application and browser UI
+src/dashboard/             FastAPI application, local/hosted worker, and browser UI
+api/                      Vercel same-origin API/media proxy
 tests/                     Automated tests
 ```

@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import os
 import subprocess
 import sys
 import threading
+import tempfile
+import uuid
+import socket
+from fractions import Fraction
 from datetime import date, datetime, time, timezone
 import math
 from pathlib import Path
@@ -16,17 +21,19 @@ from typing import Any, Optional
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
-from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from src.core.db import get_db
+from src.core.db import get_db, SessionLocal, tenant_id
 from src.core.models import (
     FinalClip, Creator, RightsAgreement, ProcessingJob,
     DeliveryLog, MediaSource, CandidateClip, now_utc, generate_id,
+    UserAccount, EmailVerification, AuthSession, SystemSetting,
 )
 from src.core.config import get_settings
 from src.core.logger import get_logger
@@ -35,6 +42,184 @@ logger = get_logger("dashboard.api")
 settings = get_settings()
 
 app = FastAPI(title="GTA CLIP COMMAND API", version="2.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[settings.frontend_origin, "http://127.0.0.1:8000", "http://localhost:8000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
+
+
+@app.on_event("startup")
+def initialize_application():
+    from src.core.db import init_db
+    if settings.auth_enabled:
+        missing = []
+        if not settings.database_url.startswith(("postgresql://", "postgresql+psycopg://", "postgres://")):
+            missing.append("DATABASE_URL (PostgreSQL)")
+        if not settings.redis_url:
+            missing.append("REDIS_URL")
+        if not settings.storage_bucket or not settings.storage_access_key or not settings.storage_secret_key:
+            missing.append("S3-compatible object storage credentials")
+        if not settings.cloud_key_encryption_key:
+            missing.append("CLOUD_KEY_ENCRYPTION_KEY")
+        if not settings.smtp_host or not settings.smtp_from:
+            missing.append("SMTP_HOST and SMTP_FROM")
+        if missing:
+            raise RuntimeError("Hosted deployment is missing required settings: " + ", ".join(missing))
+    init_db()
+
+
+@app.middleware("http")
+async def authenticate_request(request: Request, call_next):
+    token = tenant_id.set(None)
+    try:
+        path = request.url.path
+        public_auth = path in ("/api/auth/register", "/api/auth/verify", "/api/auth/login")
+        protected_page = path not in ("/", "/healthz") and not path.startswith("/static/") and not public_auth
+        if settings.auth_enabled and protected_page and path != "/config.js":
+            db = SessionLocal()
+            try:
+                from src.core.accounts import session_user
+                user = session_user(db, request.cookies.get("gta_session"))
+            finally:
+                db.close()
+            if not user and not path.startswith("/api/auth/"):
+                return JSONResponse({"detail": "Sign in with a verified account to continue."}, status_code=401)
+            if user:
+                request.state.user_id = user.id
+                token = tenant_id.set(user.id)
+        response = await call_next(request)
+        return response
+    finally:
+        tenant_id.reset(token)
+
+
+@app.get("/healthz")
+def health_check():
+    return {"status": "ok"}
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class DirectUploadRequest(BaseModel):
+    filename: str
+    content_type: str = "application/octet-stream"
+    size_bytes: int
+
+
+class CompleteUploadRequest(BaseModel):
+    storage_key: str
+    creator_id: str
+    title: str
+    filename: str
+
+
+class RightsCompleteRequest(BaseModel):
+    creator_id: str
+    agreement_id: Optional[str] = None
+    agreement_type: str
+    authorized_by: str
+    status: str = "active"
+    valid_to: Optional[str] = None
+    rev_share_percent: float = 0.0
+    notes: Optional[str] = None
+    document_key: Optional[str] = None
+
+
+@app.post("/api/auth/register", status_code=202)
+def register_account(req: RegisterRequest, db: Session = Depends(get_db)):
+    import re
+    from src.core.accounts import hash_password, new_verification
+    email = req.email.strip().lower()
+    if not re.fullmatch(r"[^@\s]{1,64}@[^@\s.]+(?:\.[^@\s.]+)+", email):
+        raise HTTPException(status_code=422, detail="Enter a valid email address.")
+    if len(req.password) < 12:
+        raise HTTPException(status_code=422, detail="Password must contain at least 12 characters.")
+    if len(req.password) > 128:
+        raise HTTPException(status_code=422, detail="Password must be 128 characters or fewer.")
+    if settings.auth_enabled and (not settings.smtp_host or not settings.smtp_from):
+        raise HTTPException(status_code=503, detail="Email verification is not configured on this server.")
+    if db.query(UserAccount).filter(func.lower(UserAccount.email) == email).first():
+        raise HTTPException(status_code=409, detail="An account with that email already exists.")
+    user = UserAccount(email=email, password_hash=hash_password(req.password))
+    db.add(user)
+    db.commit()
+    try:
+        new_verification(db, user.id, user.email)
+    except RuntimeError as exc:
+        db.delete(user)
+        db.commit()
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+    except Exception:
+        logger.exception("Unable to send signup verification email")
+        db.delete(user)
+        db.commit()
+        raise HTTPException(status_code=502, detail="Could not send verification email. Try again later.") from None
+    return {"status": "verification_sent"}
+
+
+@app.get("/api/auth/verify")
+def verify_account(token: str, db: Session = Depends(get_db)):
+    import hashlib
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    record = db.query(EmailVerification).filter(EmailVerification.token_hash == digest).first()
+    if not record or record.expires_at < now_utc():
+        raise HTTPException(status_code=400, detail="Verification link is invalid or expired.")
+    user = db.query(UserAccount).filter(UserAccount.id == record.user_id).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="Account not found.")
+    user.verified_at = now_utc()
+    db.delete(record)
+    db.commit()
+    return {"status": "verified"}
+
+
+@app.post("/api/auth/login")
+def login_account(req: LoginRequest, response: Response, db: Session = Depends(get_db)):
+    from src.core.accounts import verify_password, new_session
+    email = req.email.strip().lower()
+    user = db.query(UserAccount).filter(func.lower(UserAccount.email) == email).first()
+    if not user or not verify_password(req.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Email or password is incorrect.")
+    if not user.verified_at:
+        raise HTTPException(status_code=403, detail="Verify your email before signing in.")
+    session_token = new_session(db, user.id)
+    response.set_cookie("gta_session", session_token, httponly=True, secure=settings.auth_enabled,
+                        samesite="lax", max_age=30 * 24 * 3600, path="/")
+    return {"status": "signed_in", "email": user.email}
+
+
+@app.post("/api/auth/logout")
+def logout_account(request: Request, response: Response, db: Session = Depends(get_db)):
+    import hashlib
+    raw = request.cookies.get("gta_session")
+    if raw:
+        row = db.query(AuthSession).filter(AuthSession.token_hash == hashlib.sha256(raw.encode()).hexdigest()).first()
+        if row:
+            db.delete(row)
+            db.commit()
+    response.delete_cookie("gta_session", path="/")
+    return {"status": "signed_out"}
+
+
+@app.get("/api/auth/me")
+def account_info(request: Request, db: Session = Depends(get_db)):
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        return {"authenticated": False, "auth_required": settings.auth_enabled}
+    user = db.query(UserAccount).filter(UserAccount.id == user_id).first()
+    from src.core.accounts import usage_payload
+    return {"authenticated": True, "email": user.email if user else "", "usage": usage_payload(db, user_id)}
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -112,6 +297,25 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _validate_provider_base_url(base_url: str) -> None:
+    parsed = urlsplit(base_url)
+    local_hosts = {"localhost", "127.0.0.1", "::1"}
+    if parsed.scheme not in ("https", "http") or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(status_code=400, detail="Enter a valid API base URL.")
+    host = parsed.hostname.lower()
+    if parsed.scheme != "https" and not (parsed.scheme == "http" and host in local_hosts and not settings.auth_enabled):
+        raise HTTPException(status_code=400, detail="Use HTTPS for hosted endpoints. HTTP is allowed only for localhost in local mode.")
+    if settings.auth_enabled:
+        try:
+            addresses = {item[4][0] for item in socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)}
+            if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
+                raise HTTPException(status_code=400, detail="Hosted API endpoints must resolve to public internet addresses.")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="Could not resolve the hosted API endpoint.") from None
+
+
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -127,7 +331,9 @@ MAX_RIGHTS_DOCUMENT_BYTES = 20 * 1024 * 1024
 
 
 def _rights_document_payload(agreement: RightsAgreement) -> dict[str, Any]:
-    doc_path = Path(agreement.documentation_path) if agreement.documentation_path else None
+    stored_path = agreement.documentation_path or ""
+    is_object = stored_path.startswith("s3://")
+    doc_path = Path(stored_path) if stored_path and not is_object else None
     effective_status = agreement.status
     if agreement.status == "active" and agreement.valid_to is not None and agreement.valid_to < now_utc():
         effective_status = "expired"
@@ -139,9 +345,9 @@ def _rights_document_payload(agreement: RightsAgreement) -> dict[str, Any]:
         "valid_from": agreement.valid_from.isoformat() if agreement.valid_from else None,
         "valid_to": agreement.valid_to.isoformat() if agreement.valid_to else None,
         "rev_share_percent": agreement.rev_share_percent,
-        "documentation_name": doc_path.name if doc_path else None,
-        "documentation_available": bool(doc_path and doc_path.is_file()),
-        "document_url": f"/api/rights/{agreement.id}/document" if doc_path and doc_path.is_file() else None,
+        "documentation_name": Path(stored_path.split("/", 3)[-1]).name if is_object else (doc_path.name if doc_path else None),
+        "documentation_available": is_object or bool(doc_path and doc_path.is_file()),
+        "document_url": f"/api/rights/{agreement.id}/document" if is_object or (doc_path and doc_path.is_file()) else None,
         "authorized_by": agreement.authorized_by,
         "notes": agreement.notes,
         "created_at": agreement.created_at.isoformat() if agreement.created_at else None,
@@ -157,7 +363,7 @@ def _rights_expiry_date(value: str | None) -> datetime | None:
         raise HTTPException(status_code=422, detail="Valid until must be a date in YYYY-MM-DD format") from exc
 
 
-async def _archive_rights_document(file: UploadFile, creator_id: str, agreement_id: str) -> Path:
+async def _archive_rights_document(file: UploadFile, creator_id: str, agreement_id: str) -> str:
     extension = Path(file.filename or "").suffix.lower()
     if extension not in RIGHTS_DOCUMENT_EXTENSIONS:
         raise HTTPException(status_code=415, detail="Permission documents must be PDF, DOC, DOCX, PNG, JPG, or JPEG")
@@ -166,10 +372,25 @@ async def _archive_rights_document(file: UploadFile, creator_id: str, agreement_
         raise HTTPException(status_code=422, detail="The permission document is empty")
     if len(contents) > MAX_RIGHTS_DOCUMENT_BYTES:
         raise HTTPException(status_code=413, detail="Permission documents must be 20 MB or smaller")
+    from src.core.object_storage import configured, upload_bytes
+    key = f"users/{tenant_id.get() or 'local'}/agreements/{creator_id}_{agreement_id}{extension}"
+    if configured():
+        return upload_bytes(contents, key, file.content_type or "application/octet-stream")
     settings.agreements_dir.mkdir(parents=True, exist_ok=True)
     archived = settings.agreements_dir / f"{creator_id}_{agreement_id}{extension}"
     archived.write_bytes(contents)
-    return archived
+    return str(archived)
+
+
+def _remove_archived_rights_document(path: str) -> None:
+    if path.startswith("s3://"):
+        try:
+            from src.core.object_storage import delete_object
+            delete_object(path)
+        except Exception:
+            logger.exception("Could not remove archived rights object")
+    else:
+        Path(path).unlink(missing_ok=True)
 
 
 def _ffprobe_duration(path: Path) -> float:
@@ -198,11 +419,15 @@ def _ffprobe_metadata(path: Path) -> dict:
         video_stream = next(
             (s for s in info.get("streams", []) if s.get("codec_type") == "video"), {}
         )
+        try:
+            fps = float(Fraction(video_stream.get("avg_frame_rate", "60/1")))
+        except (ValueError, ZeroDivisionError):
+            fps = 60.0
         return {
             "duration": float(info.get("format", {}).get("duration", 0)),
             "width": int(video_stream.get("width", 1920)),
             "height": int(video_stream.get("height", 1080)),
-            "fps": eval(video_stream.get("avg_frame_rate", "60/1")),
+            "fps": fps,
         }
     except Exception:
         return {"duration": 0.0, "width": 1920, "height": 1080, "fps": 60.0}
@@ -211,6 +436,18 @@ def _ffprobe_metadata(path: Path) -> dict:
 def _get_worker():
     from src.dashboard.worker import get_worker
     return get_worker()
+
+
+def _enqueue_job(job: ProcessingJob, media: MediaSource, creator: Creator) -> None:
+    if settings.redis_url:
+        try:
+            from src.core.queue import get_redis_client
+            get_redis_client(settings.redis_url).rpush("gta:processing:jobs", job.id)
+            return
+        except Exception as exc:
+            logger.exception("Could not enqueue job in Redis")
+            raise HTTPException(status_code=503, detail="Processing queue is unavailable. Please retry.") from exc
+    _get_worker().enqueue(job.id, media.id, creator.handle, media.file_path, tenant_id.get())
 
 
 def _storage_gb(directory: Path) -> float:
@@ -232,6 +469,11 @@ def _storage_gb(directory: Path) -> float:
 def get_index():
     index_file = STATIC_DIR / "index.html"
     return HTMLResponse(content=index_file.read_text(encoding="utf-8"))
+
+
+@app.get("/config.js")
+def get_frontend_runtime_config():
+    return FileResponse(STATIC_DIR / "config.js", media_type="application/javascript")
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +551,158 @@ def upload_creators(db: Session = Depends(get_db)):
     return {"creators": result}
 
 
+@app.post("/api/upload/presign")
+def create_upload_url(req: DirectUploadRequest, request: Request, db: Session = Depends(get_db)):
+    from src.core.object_storage import configured, presign_upload
+    if not configured():
+        raise HTTPException(status_code=503, detail="Direct uploads are not configured. Set the S3-compatible storage environment variables.")
+    ext = Path(req.filename).suffix.lower()
+    if ext not in {".mp4", ".mov", ".avi", ".mkv"}:
+        raise HTTPException(status_code=415, detail="Supported video formats are MP4, MOV, AVI, and MKV.")
+    if req.size_bytes <= 0 or req.size_bytes > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail="Video file is empty or exceeds the configured upload size limit.")
+    owner = getattr(request.state, "user_id", None) or "local"
+    key = f"users/{owner}/uploads/{uuid.uuid4().hex}{ext}"
+    content_type = req.content_type if req.content_type.startswith("video/") else "application/octet-stream"
+    try:
+        url = presign_upload(key, content_type, req.size_bytes)
+    except Exception:
+        logger.exception("Could not create a signed storage upload")
+        raise HTTPException(status_code=503, detail="Object storage is unavailable.") from None
+    return {"upload_url": url, "storage_key": key, "method": "PUT", "content_type": content_type, "size_bytes": req.size_bytes}
+
+
+@app.post("/api/rights/presign")
+def create_rights_document_url(req: DirectUploadRequest, request: Request):
+    from src.core.object_storage import configured, presign_upload
+    if not configured():
+        raise HTTPException(status_code=503, detail="Object storage is not configured.")
+    extension = Path(req.filename).suffix.lower()
+    if extension not in RIGHTS_DOCUMENT_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="Unsupported permission document format.")
+    if req.size_bytes <= 0 or req.size_bytes > MAX_RIGHTS_DOCUMENT_BYTES:
+        raise HTTPException(status_code=413, detail="Permission documents must be 20 MB or smaller.")
+    owner = getattr(request.state, "user_id", None) or "local"
+    key = f"users/{owner}/agreements/{uuid.uuid4().hex}{extension}"
+    content_type = req.content_type or "application/octet-stream"
+    try:
+        url = presign_upload(key, content_type, req.size_bytes)
+    except Exception:
+        logger.exception("Could not create signed rights-document upload")
+        raise HTTPException(status_code=503, detail="Object storage is unavailable.") from None
+    return {"upload_url": url, "storage_key": key, "content_type": content_type}
+
+
+@app.post("/api/rights/complete")
+def complete_rights_document(req: RightsCompleteRequest, request: Request, db: Session = Depends(get_db)):
+    from src.core.object_storage import client, uri_for
+    owner = getattr(request.state, "user_id", None) or "local"
+    if req.agreement_type not in RIGHTS_AGREEMENT_TYPES or req.status not in RIGHTS_STATUSES:
+        raise HTTPException(status_code=422, detail="Unsupported rights agreement type or status.")
+    if not req.authorized_by.strip() or not math.isfinite(req.rev_share_percent) or not 0 <= req.rev_share_percent <= 100:
+        raise HTTPException(status_code=422, detail="Authorized by and a valid revenue share (0–100) are required.")
+    creator = db.query(Creator).filter(Creator.id == req.creator_id).first()
+    if not creator:
+        raise HTTPException(status_code=404, detail="Creator not found.")
+    agreement = db.query(RightsAgreement).filter(RightsAgreement.id == req.agreement_id).first() if req.agreement_id else None
+    if req.agreement_id and (not agreement or agreement.creator_id != creator.id):
+        raise HTTPException(status_code=404, detail="Rights agreement not found.")
+    if not agreement and not req.document_key:
+        raise HTTPException(status_code=422, detail="A permission document is required for a new agreement.")
+    new_document = None
+    if req.document_key:
+        if not req.document_key.startswith(f"users/{owner}/agreements/") or Path(req.document_key).suffix.lower() not in RIGHTS_DOCUMENT_EXTENSIONS:
+            raise HTTPException(status_code=403, detail="Permission document does not belong to this account.")
+        try:
+            head = client().head_object(Bucket=settings.storage_bucket, Key=req.document_key)
+            if int(head.get("ContentLength", 0)) <= 0 or int(head["ContentLength"]) > MAX_RIGHTS_DOCUMENT_BYTES:
+                raise HTTPException(status_code=413, detail="Permission documents must be 20 MB or smaller.")
+            new_document = uri_for(req.document_key)
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=422, detail="Permission document upload was not found or is incomplete.") from None
+    expiry = _rights_expiry_date(req.valid_to)
+    if agreement:
+        agreement.agreement_type = req.agreement_type
+        agreement.status = req.status
+        agreement.valid_to = expiry
+        agreement.rev_share_percent = req.rev_share_percent
+        agreement.authorized_by = req.authorized_by.strip()
+        agreement.notes = req.notes.strip() if req.notes else None
+        if new_document:
+            agreement.documentation_path = new_document
+    else:
+        agreement = RightsAgreement(creator_id=creator.id, agreement_type=req.agreement_type,
+            status=req.status, valid_to=expiry, rev_share_percent=req.rev_share_percent,
+            documentation_path=new_document, authorized_by=req.authorized_by.strip(),
+            notes=req.notes.strip() if req.notes else None)
+        db.add(agreement)
+    db.commit()
+    db.refresh(agreement)
+    return _rights_document_payload(agreement)
+
+
+@app.post("/api/upload/complete")
+def complete_direct_upload(req: CompleteUploadRequest, request: Request, db: Session = Depends(get_db)):
+    from src.core.object_storage import client, configured, uri_for
+    if not configured():
+        raise HTTPException(status_code=503, detail="Direct uploads are not configured.")
+    owner = getattr(request.state, "user_id", None) or "local"
+    if not req.storage_key.startswith(f"users/{owner}/uploads/"):
+        raise HTTPException(status_code=403, detail="This upload does not belong to the current account.")
+    creator = db.query(Creator).filter(Creator.id == req.creator_id).first()
+    if not creator or creator.status != "active":
+        raise HTTPException(status_code=404, detail="Active creator not found.")
+    agreement = db.query(RightsAgreement).filter(RightsAgreement.creator_id == creator.id, RightsAgreement.status == "active").first()
+    if not agreement or (agreement.valid_to and agreement.valid_to < now_utc()):
+        raise HTTPException(status_code=403, detail="Creator has no active rights agreement.")
+    try:
+        meta_obj = client().head_object(Bucket=settings.storage_bucket, Key=req.storage_key)
+        if int(meta_obj.get("ContentLength", 0)) <= 0 or int(meta_obj["ContentLength"]) > settings.max_upload_bytes:
+            raise ValueError("The uploaded video is empty.")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_path = Path(temp_dir) / Path(req.filename).name
+            client().download_file(settings.storage_bucket, req.storage_key, str(local_path))
+            sha = _sha256(local_path)
+            if db.query(MediaSource).filter(MediaSource.sha256_hash == sha).first():
+                raise HTTPException(status_code=409, detail="This video has already been uploaded.")
+            meta = _ffprobe_metadata(local_path)
+            duration = float(meta.get("duration") or 0)
+            if duration <= 0:
+                raise HTTPException(status_code=422, detail="Could not read a valid video duration.")
+            if duration > settings.max_video_seconds:
+                raise HTTPException(status_code=413, detail=f"Videos must be {settings.max_video_seconds // 60} minutes or shorter.")
+            media = MediaSource(creator_id=creator.id, title=req.title.strip() or Path(req.filename).stem,
+                file_path=uri_for(req.storage_key), source_type="upload", duration_seconds=duration,
+                width=meta["width"], height=meta["height"], fps=meta["fps"], sha256_hash=sha)
+            db.add(media)
+            db.flush()
+            job = ProcessingJob(media_id=media.id, status="queued", current_stage="intake", progress_percent=0)
+            db.add(job)
+            db.flush()
+            if settings.auth_enabled:
+                from src.core.accounts import reserve_seconds
+                try:
+                    reserve_seconds(db, owner, job.id, math.ceil(duration))
+                except ValueError as exc:
+                    db.rollback()
+                    raise HTTPException(status_code=429, detail=str(exc)) from None
+            db.commit()
+            db.refresh(job)
+            # Persist first, then dispatch. The Render worker only sees committed
+            # jobs; if Redis is temporarily unavailable the saved queued job can
+            # still be started again from the Queue screen.
+            _enqueue_job(job, media, creator)
+            return {"job_id": job.id, "media_id": media.id, "duration_seconds": duration}
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        logger.exception("Direct upload validation failed")
+        raise HTTPException(status_code=422, detail="Could not validate the uploaded video. Confirm it finished uploading and is a supported file.") from None
+
+
 @app.post("/api/upload")
 async def upload_video(
     file: UploadFile = File(...),
@@ -316,6 +710,8 @@ async def upload_video(
     title: str = Form(...),
     db: Session = Depends(get_db),
 ):
+    if settings.auth_enabled:
+        raise HTTPException(status_code=409, detail="Hosted uploads must use the signed direct-to-storage upload flow.")
     creator = db.query(Creator).filter(Creator.id == creator_id).first()
     if not creator:
         raise HTTPException(status_code=404, detail="Creator not found")
@@ -338,8 +734,12 @@ async def upload_video(
         dest = settings.raw_footage_dir / f"{Path(safe_name).stem}_{counter}{Path(safe_name).suffix}"
         counter += 1
 
-    content = await file.read()
-    dest.write_bytes(content)
+    try:
+        with dest.open("wb") as output:
+            while chunk := await file.read(1024 * 1024):
+                output.write(chunk)
+    finally:
+        await file.close()
 
     # SHA-256 duplicate check
     sha = _sha256(dest)
@@ -350,6 +750,13 @@ async def upload_video(
 
     # ffprobe metadata
     meta = _ffprobe_metadata(dest)
+    duration = float(meta.get("duration") or 0)
+    if duration <= 0:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail="Could not read a valid video duration. Check that FFprobe is installed and the file is valid.")
+    if duration > settings.max_video_seconds:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=413, detail=f"Videos must be {settings.max_video_seconds // 60} minutes or shorter.")
 
     # Create MediaSource
     media = MediaSource(
@@ -357,7 +764,7 @@ async def upload_video(
         title=title,
         file_path=str(dest),
         source_type="upload",
-        duration_seconds=meta["duration"],
+        duration_seconds=duration,
         width=meta["width"],
         height=meta["height"],
         fps=meta["fps"],
@@ -374,11 +781,26 @@ async def upload_video(
         progress_percent=0,
     )
     db.add(job)
-    db.commit()
+    user_id = tenant_id.get()
+    if settings.auth_enabled:
+        from src.core.accounts import reserve_seconds
+        try:
+            db.flush()
+            reserve_seconds(db, user_id, job.id, math.ceil(duration))
+        except ValueError as exc:
+            db.rollback()
+            dest.unlink(missing_ok=True)
+            raise HTTPException(status_code=429, detail=str(exc)) from None
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        dest.unlink(missing_ok=True)
+        raise
     db.refresh(job)
 
     logger.info("Uploaded %s → media=%s job=%s", safe_name, media.id, job.id)
-    return {"job_id": job.id, "media_id": media.id, "file": str(dest)}
+    return {"job_id": job.id, "media_id": media.id, "file": str(dest), "duration_seconds": duration}
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +843,8 @@ def queue_start(job_id: str, db: Session = Depends(get_db)):
     job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != "queued":
+        raise HTTPException(status_code=409, detail=f"Only queued jobs can be started (current status: {job.status}).")
     media = db.query(MediaSource).filter(MediaSource.id == job.media_id).first()
     if not media:
         raise HTTPException(status_code=404, detail="Media not found")
@@ -428,26 +852,57 @@ def queue_start(job_id: str, db: Session = Depends(get_db)):
     if not creator:
         raise HTTPException(status_code=404, detail="Creator not found")
 
-    worker = _get_worker()
-    worker.enqueue(job.id, media.id, creator.handle, media.file_path)
+    _enqueue_job(job, media, creator)
     return {"status": "queued", "job_id": job_id}
 
 
 @app.post("/api/queue/{job_id}/pause")
-def queue_pause(job_id: str):
-    _get_worker().pause(job_id)
+def queue_pause(job_id: str, db: Session = Depends(get_db)):
+    job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != "running":
+        raise HTTPException(status_code=409, detail="Only a running job can be paused.")
+    job.status = "paused"
+    db.commit()
+    if not settings.redis_url:
+        _get_worker().pause(job_id)
     return {"status": "pause_requested", "job_id": job_id}
 
 
 @app.post("/api/queue/{job_id}/resume")
-def queue_resume(job_id: str):
-    _get_worker().resume(job_id)
+def queue_resume(job_id: str, db: Session = Depends(get_db)):
+    job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != "paused":
+        raise HTTPException(status_code=409, detail="Only a paused job can be resumed.")
+    needs_enqueue = settings.redis_url and job.started_at is None
+    job.status = "queued" if needs_enqueue else "running"
+    db.commit()
+    if not settings.redis_url:
+        _get_worker().resume(job_id)
+    elif needs_enqueue:
+        media = db.query(MediaSource).filter(MediaSource.id == job.media_id).first()
+        creator = db.query(Creator).filter(Creator.id == media.creator_id).first() if media else None
+        if media and creator:
+            _enqueue_job(job, media, creator)
     return {"status": "resume_requested", "job_id": job_id}
 
 
 @app.post("/api/queue/{job_id}/cancel")
-def queue_cancel(job_id: str):
-    _get_worker().cancel(job_id)
+def queue_cancel(job_id: str, db: Session = Depends(get_db)):
+    job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job.status = "cancelled"
+    job.completed_at = _now()
+    if settings.auth_enabled:
+        from src.core.accounts import settle_reservation
+        settle_reservation(db, job_id, consume=job.progress_percent >= 25)
+    db.commit()
+    if not settings.redis_url:
+        _get_worker().cancel(job_id)
     return {"status": "cancelled", "job_id": job_id}
 
 
@@ -465,6 +920,13 @@ def queue_retry(job_id: str, db: Session = Depends(get_db)):
     if not media or not creator:
         raise HTTPException(status_code=409, detail="The source video or creator for this job is missing")
 
+    if settings.auth_enabled:
+        from src.core.accounts import reserve_seconds
+        try:
+            reserve_seconds(db, tenant_id.get(), job.id, math.ceil(media.duration_seconds))
+        except ValueError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from None
+
     job.status = "queued"
     job.current_stage = "intake"
     job.progress_percent = 0
@@ -478,7 +940,7 @@ def queue_retry(job_id: str, db: Session = Depends(get_db)):
     job.stage_states = None
     db.query(CandidateClip).filter(CandidateClip.job_id == job_id).delete(synchronize_session=False)
     db.commit()
-    _get_worker().enqueue(job.id, media.id, creator.handle, media.file_path)
+    _enqueue_job(job, media, creator)
     return {"status": "queued", "job_id": job_id}
 
 
@@ -491,7 +953,10 @@ def queue_delete(job_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail=f"Cannot delete job with status '{job.status}'")
     if db.query(FinalClip).filter(FinalClip.job_id == job_id).count():
         raise HTTPException(status_code=409, detail="This job has generated clips. Review or export them before deleting the job.")
-    removed = _get_worker().remove(job_id)
+    if settings.auth_enabled:
+        from src.core.accounts import settle_reservation
+        settle_reservation(db, job_id, consume=False)
+    removed = False if settings.redis_url else _get_worker().remove(job_id)
     db.delete(job)
     db.commit()
     return {"removed": True, "worker_state_removed": removed, "job_id": job_id}
@@ -531,7 +996,7 @@ def get_monitor(job_id: str, db: Session = Depends(get_db)):
             else:
                 stage_states[stage_name] = "pending"
 
-    worker_state = _get_worker().get_status(job_id) or {}
+    worker_state = {} if settings.redis_url else (_get_worker().get_status(job_id) or {})
     if worker_state.get("logs"):
         stage_logs = worker_state["logs"][-300:]
     else:
@@ -577,6 +1042,36 @@ def get_monitor(job_id: str, db: Session = Depends(get_db)):
 @app.get("/api/events")
 async def sse_events():
     """Server-Sent Events stream. Streams pipeline events to connected clients."""
+    if settings.redis_url:
+        from src.core.db import tenant_id
+        owner = tenant_id.get()
+        from src.core.queue import get_redis_client
+        client = get_redis_client(settings.redis_url)
+        pubsub = client.pubsub()
+        pubsub.subscribe("gta:processing:events")
+
+        async def hosted_generator():
+            try:
+                while True:
+                    message = await asyncio.to_thread(pubsub.get_message, ignore_subscribe_messages=True, timeout=5.0)
+                    if message and message.get("type") == "message":
+                        try:
+                            event = json.loads(message["data"])
+                            event_owner = event.pop("owner_id", None)
+                            if owner and event_owner != owner:
+                                continue
+                            yield f"data: {json.dumps(event)}\n\n"
+                        except (ValueError, TypeError, KeyError):
+                            continue
+                    else:
+                        yield "data: {\"type\":\"heartbeat\"}\n\n"
+            except asyncio.CancelledError:
+                pass
+            finally:
+                pubsub.close()
+
+        return StreamingResponse(hosted_generator(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
     worker = _get_worker()
     q = worker.subscribe()
 
@@ -613,8 +1108,8 @@ def list_clips(db: Session = Depends(get_db)):
     clips = db.query(FinalClip).order_by(FinalClip.created_at.desc()).all()
     out = []
     for c in clips:
-        has_video = c.output_path and Path(c.output_path).exists()
-        has_thumb = c.thumbnail_path and Path(c.thumbnail_path).exists()
+        has_video = c.output_path and (c.output_path.startswith("s3://") or Path(c.output_path).exists())
+        has_thumb = c.thumbnail_path and (c.thumbnail_path.startswith("s3://") or Path(c.thumbnail_path).exists())
         out.append({
             "id": c.id,
             "title": c.title,
@@ -640,16 +1135,22 @@ def list_clips(db: Session = Depends(get_db)):
 @app.get("/video/{clip_id}")
 def stream_video(clip_id: str, db: Session = Depends(get_db)):
     clip = db.query(FinalClip).filter(FinalClip.id == clip_id).first()
-    if not clip or not clip.output_path or not Path(clip.output_path).exists():
+    if not clip or not clip.output_path or (not clip.output_path.startswith("s3://") and not Path(clip.output_path).exists()):
         raise HTTPException(status_code=404, detail="Video file not found")
+    if clip.output_path.startswith("s3://"):
+        from src.core.object_storage import presign_download
+        return RedirectResponse(presign_download(clip.output_path), status_code=307)
     return FileResponse(clip.output_path, media_type="video/mp4")
 
 
 @app.get("/thumb/{clip_id}")
 def get_thumbnail(clip_id: str, db: Session = Depends(get_db)):
     clip = db.query(FinalClip).filter(FinalClip.id == clip_id).first()
-    if not clip or not clip.thumbnail_path or not Path(clip.thumbnail_path).exists():
+    if not clip or not clip.thumbnail_path or (not clip.thumbnail_path.startswith("s3://") and not Path(clip.thumbnail_path).exists()):
         raise HTTPException(status_code=404, detail="Thumbnail not found")
+    if clip.thumbnail_path.startswith("s3://"):
+        from src.core.object_storage import presign_download
+        return RedirectResponse(presign_download(clip.thumbnail_path), status_code=307)
     return FileResponse(clip.thumbnail_path, media_type="image/jpeg")
 
 
@@ -810,8 +1311,8 @@ def get_library(
             "optimal_end": c.optimal_end,
             "approval_status": c.approval_status,
             "status": "pending" if c.approval_status == "pending_review" else c.approval_status,
-            "thumbnail_url": f"/thumb/{c.id}" if c.thumbnail_path and Path(c.thumbnail_path).exists() else None,
-            "video_url": f"/video/{c.id}" if c.output_path and Path(c.output_path).exists() else None,
+            "thumbnail_url": f"/thumb/{c.id}" if c.thumbnail_path and (c.thumbnail_path.startswith("s3://") or Path(c.thumbnail_path).exists()) else None,
+            "video_url": f"/video/{c.id}" if c.output_path and (c.output_path.startswith("s3://") or Path(c.output_path).exists()) else None,
             "export_path": c.output_path,
             "created_at": c.created_at.isoformat() if c.created_at else None,
         })
@@ -923,7 +1424,7 @@ async def create_creator_rights(
         db.refresh(agreement)
     except Exception:
         db.rollback()
-        archived.unlink(missing_ok=True)
+        _remove_archived_rights_document(archived)
         raise
     return _rights_document_payload(agreement)
 
@@ -965,6 +1466,7 @@ async def update_creator_rights(
         agreement.notes = notes.strip() or None
 
     archived = None
+    prior_document = agreement.documentation_path
     if document is not None and document.filename:
         archived = await _archive_rights_document(document, agreement.creator_id, agreement_id)
         agreement.documentation_path = str(archived)
@@ -974,8 +1476,10 @@ async def update_creator_rights(
     except Exception:
         db.rollback()
         if archived:
-            archived.unlink(missing_ok=True)
+            _remove_archived_rights_document(archived)
         raise
+    if archived and prior_document and prior_document != archived:
+        _remove_archived_rights_document(prior_document)
     return _rights_document_payload(agreement)
 
 
@@ -994,6 +1498,9 @@ def get_rights_document(agreement_id: str, db: Session = Depends(get_db)):
     agreement = db.query(RightsAgreement).filter(RightsAgreement.id == agreement_id).first()
     if not agreement or not agreement.documentation_path:
         raise HTTPException(status_code=404, detail="Permission document not found")
+    if agreement.documentation_path.startswith("s3://"):
+        from src.core.object_storage import presign_download
+        return RedirectResponse(presign_download(agreement.documentation_path), status_code=307)
     document = Path(agreement.documentation_path).resolve()
     agreements_root = settings.agreements_dir.resolve()
     if not document.is_relative_to(agreements_root) or not document.is_file():
@@ -1202,15 +1709,17 @@ def select_models(req: ModelSelectRequest, db: Session = Depends(get_db)):
 @app.get("/api/settings/ai")
 def get_ai_settings(db: Session = Depends(get_db)):
     from src.core.models import SystemSetting
-    values = {row.key: row.value for row in db.query(SystemSetting).filter(SystemSetting.key.like("ai_%")).all()}
+    values = {row.key.split("::", 1)[-1]: row.value for row in db.query(SystemSetting).filter(SystemSetting.key.like("%ai_%")).all()}
     encrypted_key = values.get("ai_cloud_api_key", "")
     return {
         "reasoning_provider": values.get("ai_reasoning_provider", "ollama"),
         "vision_provider": values.get("ai_vision_provider", "ollama"),
-        "cloud_base_url": values.get("ai_cloud_base_url", "https://api.openai.com/v1"),
+        "cloud_base_url": values.get("ai_cloud_base_url", "https://api.groq.com/openai/v1" if settings.groq_api_key else "https://api.openai.com/v1"),
         "cloud_reasoning_model": values.get("ai_cloud_reasoning_model", ""),
         "cloud_vision_model": values.get("ai_cloud_vision_model", ""),
-        "api_key_configured": encrypted_key.startswith("dpapi:"),
+        "api_key_configured": encrypted_key.startswith(("dpapi:", "fernet:")) or bool(settings.groq_api_key),
+        "user_api_key_configured": encrypted_key.startswith(("dpapi:", "fernet:")),
+        "platform_key_available": bool(settings.groq_api_key),
     }
 
 
@@ -1220,12 +1729,7 @@ def update_ai_settings(req: AISettingsRequest, db: Session = Depends(get_db)):
     if req.reasoning_provider not in ("ollama", "openai_compatible") or req.vision_provider not in ("ollama", "openai_compatible"):
         raise HTTPException(status_code=400, detail="Provider must be Ollama or OpenAI-compatible.")
     base_url = req.cloud_base_url.strip().rstrip("/")
-    parsed_url = urlsplit(base_url)
-    local_hosts = {"localhost", "127.0.0.1", "::1"}
-    if parsed_url.scheme not in ("https", "http") or not parsed_url.hostname or parsed_url.username or parsed_url.password:
-        raise HTTPException(status_code=400, detail="Enter a valid API base URL.")
-    if parsed_url.scheme != "https" and not (parsed_url.scheme == "http" and parsed_url.hostname.lower() in local_hosts):
-        raise HTTPException(status_code=400, detail="Use HTTPS for cloud endpoints. HTTP is allowed only for localhost.")
+    _validate_provider_base_url(base_url)
     updates = {
         "ai_reasoning_provider": req.reasoning_provider,
         "ai_vision_provider": req.vision_provider,
@@ -1233,37 +1737,96 @@ def update_ai_settings(req: AISettingsRequest, db: Session = Depends(get_db)):
         "ai_cloud_reasoning_model": req.cloud_reasoning_model.strip(),
         "ai_cloud_vision_model": req.cloud_vision_model.strip(),
     }
+    owner_id = tenant_id.get()
+    prefix = f"{owner_id}::" if settings.auth_enabled and owner_id else ""
+    updates = {f"{prefix}{key}": value for key, value in updates.items()}
+    key_name = f"{prefix}ai_cloud_api_key"
     if req.clear_api_key:
-        updates["ai_cloud_api_key"] = ""
+        updates[key_name] = ""
     elif req.cloud_api_key:
         from src.core.secrets import encrypt_secret
         try:
-            updates["ai_cloud_api_key"] = encrypt_secret(req.cloud_api_key)
+            updates[key_name] = encrypt_secret(req.cloud_api_key)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
     for key, value in updates.items():
         row = db.query(SystemSetting).filter(SystemSetting.key == key).first()
         if row:
             row.value = value
+            row.owner_id = owner_id
             row.updated_at = _now()
         else:
-            db.add(SystemSetting(key=key, value=value, updated_at=_now()))
+            db.add(SystemSetting(key=key, value=value, owner_id=owner_id, updated_at=_now()))
     db.commit()
-    return {"status": "updated", "api_key_configured": updates.get("ai_cloud_api_key", "configured").startswith("dpapi:") or (not req.clear_api_key and not req.cloud_api_key and get_ai_settings(db)["api_key_configured"])}
+    return {"status": "updated", "api_key_configured": bool(settings.groq_api_key) or (not req.clear_api_key and bool(req.cloud_api_key)) or get_ai_settings(db)["api_key_configured"]}
 
 
 @app.post("/api/settings/ai/test")
 def test_ai_cloud_settings(req: AISettingsRequest, db: Session = Depends(get_db)):
-    from src.reasoning.openai_compatible import list_models
+    from src.reasoning.openai_compatible import list_models, generate
     from src.reasoning.provider_config import get_ai_config
     current = get_ai_config()
     base_url = req.cloud_base_url.strip().rstrip("/") or current["cloud_base_url"]
-    api_key = req.cloud_api_key or current["cloud_api_key"]
+    _validate_provider_base_url(base_url)
+    owner_id = tenant_id.get()
+    user_key = ""
+    if settings.auth_enabled and owner_id:
+        key_row = db.query(SystemSetting).filter(SystemSetting.key == f"{owner_id}::ai_cloud_api_key").first()
+        if key_row:
+            from src.core.secrets import decrypt_secret
+            try:
+                user_key = decrypt_secret(key_row.value)
+            except Exception:
+                user_key = ""
+    api_key = req.cloud_api_key or user_key or current["cloud_api_key"] or settings.groq_api_key
     if not api_key:
         raise HTTPException(status_code=400, detail="Enter an API key before testing the cloud connection.")
+    if not req.cloud_reasoning_model.strip() and not req.cloud_vision_model.strip():
+        raise HTTPException(status_code=422, detail="Choose a reasoning model or vision model to test actual inference.")
     try:
         models = list_models(base_url, api_key)
-        return {"connected": True, "model_count": len(models), "models": [{"id": m.get("id", "")} for m in models[:100]]}
+        ids = {m.get("id", "") for m in models}
+        reasoning_model = req.cloud_reasoning_model.strip()
+        vision_model = req.cloud_vision_model.strip()
+        checks = {}
+        if reasoning_model:
+            if ids and reasoning_model not in ids:
+                raise ValueError(f"Reasoning model '{reasoning_model}' is not available for this key.")
+            generate(base_url=base_url, api_key=api_key, model=reasoning_model,
+                     prompt='Return only the JSON object {"ok":true}.', json_format=True, timeout=30)
+            checks["reasoning"] = True
+        if vision_model:
+            if ids and vision_model not in ids:
+                raise ValueError(f"Vision model '{vision_model}' is not available for this key.")
+            # Tiny generated PNG validates actual image input without exposing media.
+            import base64
+            from pathlib import Path
+            from src.reasoning.openai_compatible import generate as _generate
+            from PIL import Image
+            import tempfile
+            with tempfile.TemporaryDirectory() as temp_dir:
+                image_path = Path(temp_dir) / "probe.png"
+                Image.new("RGB", (1, 1), "black").save(image_path)
+                _generate(base_url=base_url, api_key=api_key, model=vision_model,
+                          prompt='Return only the JSON object {"ok":true}.', images=[image_path], json_format=True, timeout=30)
+            checks["vision"] = True
+        return {"connected": True, "model_count": len(models), "models": [{"id": m.get("id", "")} for m in models[:100]], "inference_checks": checks}
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        if status_code == 401 or status_code == 403:
+            detail = "The provider rejected this API key. Check that the key is active and belongs to this provider."
+            status_code = 401
+        elif status_code == 404:
+            detail = "The API endpoint or selected model was not found. Check the base URL and model IDs."
+        elif status_code == 429:
+            detail = "The provider rate limit was reached. Wait and try the connection test again."
+        elif status_code >= 500:
+            detail = "The provider is temporarily unavailable. Try again later."
+        else:
+            detail = "The provider rejected the request. Check model compatibility and settings."
+        raise HTTPException(status_code=status_code if status_code < 500 else 502, detail=detail) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     except Exception as exc:
         logger.warning("Cloud provider connection check failed (%s).", type(exc).__name__)
         raise HTTPException(status_code=502, detail="Connection failed. Check the endpoint, API key, and provider compatibility.") from None

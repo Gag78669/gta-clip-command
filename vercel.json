@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "python scripts/build_frontend.py",
+  "outputDirectory": "frontend_dist",
+  "functions": {
+    "api/**/*.js": {
+      "maxDuration": 300
+    }
+  },
+  "rewrites": [
+    { "source": "/video/:path*", "destination": "/api/proxy?path=/video/:path*" },
+    { "source": "/thumb/:path*", "destination": "/api/proxy?path=/thumb/:path*" }
+  ]
+}

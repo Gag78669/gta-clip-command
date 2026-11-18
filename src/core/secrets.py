@@ -49,10 +49,22 @@ def _crypt(data: bytes, *, protect: bool) -> bytes:
 
 
 def encrypt_secret(value: str) -> str:
+    key = os.getenv("CLOUD_KEY_ENCRYPTION_KEY", "")
+    if key:
+        from cryptography.fernet import Fernet
+        return "fernet:" + Fernet(key.encode("ascii")).encrypt(value.encode("utf-8")).decode("ascii")
+    if os.name != "nt":
+        raise RuntimeError("Set CLOUD_KEY_ENCRYPTION_KEY to encrypt cloud API keys on this server.")
     return "dpapi:" + base64.b64encode(_crypt(value.encode("utf-8"), protect=True)).decode("ascii")
 
 
 def decrypt_secret(value: str) -> str:
+    if value.startswith("fernet:"):
+        key = os.getenv("CLOUD_KEY_ENCRYPTION_KEY", "")
+        if not key:
+            raise RuntimeError("CLOUD_KEY_ENCRYPTION_KEY is not configured.")
+        from cryptography.fernet import Fernet
+        return Fernet(key.encode("ascii")).decrypt(value.removeprefix("fernet:").encode("ascii")).decode("utf-8")
     if not value.startswith("dpapi:"):
         raise ValueError("Stored secret is not encrypted with Windows DPAPI.")
     payload = base64.b64decode(value.removeprefix("dpapi:"), validate=True)

@@ -327,6 +327,8 @@ textarea.form-control{resize:vertical;min-height:80px}
   <button id="menu-toggle" onclick="toggleSidebar()">☰</button>
   <div id="header-logo">GTA<span>CLIP</span> COMMAND</div>
   <div id="header-right">
+    <span id="account-label" style="display:none;font-size:11px;color:var(--text-dim)"></span>
+    <button id="account-logout" class="btn btn-ghost btn-sm" style="display:none" onclick="logoutAccount()">Sign out</button>
     <div id="sse-status">
       <div id="sse-dot"></div>
       <span id="sse-label">Disconnected</span>
@@ -758,7 +760,22 @@ textarea.form-control{resize:vertical;min-height:80px}
 <!-- TOAST CONTAINER -->
 <div id="toast-container"></div>
 
+<script src="/config.js"></script>
+<div id="account-gate" style="display:none;position:fixed;inset:0;z-index:5000;background:rgba(5,6,12,.96);align-items:center;justify-content:center;padding:20px">
+  <div style="width:min(440px,100%);background:#12141f;border:1px solid #292e48;border-radius:12px;padding:28px;box-shadow:0 20px 80px #0009">
+    <div style="font-weight:700;color:#ff2a85;font-size:18px;margin-bottom:6px">GTA CLIP COMMAND</div>
+    <div style="color:#8790b6;margin-bottom:18px">Sign in or create an account to continue.</div>
+    <div style="display:flex;gap:8px;margin-bottom:14px"><button class="btn btn-primary" id="account-mode-login" onclick="setAccountMode('login')">Sign in</button><button class="btn btn-ghost" id="account-mode-register" onclick="setAccountMode('register')">Create account</button></div>
+    <label class="form-label">Email</label><input class="form-control" id="account-email" type="email" autocomplete="email" style="width:100%;margin-bottom:12px">
+    <label class="form-label">Password</label><input class="form-control" id="account-password" type="password" autocomplete="current-password" style="width:100%;margin-bottom:12px">
+    <button class="btn btn-primary" id="account-submit" onclick="submitAccount()" style="width:100%">Sign in</button>
+    <div id="account-message" style="margin-top:14px;color:#8790b6;min-height:22px"></div>
+  </div>
+</div>
 <script>
+function apiUrl(path){var base=(window.GTA_API_BASE||'').replace(/\/$/,'');return base+(path.charAt(0)==='/'?path:'/'+path);}
+function setAccountMode(mode){window._accountMode=mode;document.getElementById('account-submit').textContent=mode==='register'?'Create account':'Sign in';document.getElementById('account-password').autocomplete=mode==='register'?'new-password':'current-password';document.getElementById('account-message').textContent=mode==='register'?'Use a password with at least 12 characters. A verification link will be emailed to you.':'';}
+async function submitAccount(){var mode=window._accountMode||'login',email=document.getElementById('account-email').value.trim(),password=document.getElementById('account-password').value,message=document.getElementById('account-message');message.textContent='Please wait…';try{var result=await api('/api/auth/'+(mode==='register'?'register':'login'),{method:'POST',body:{email:email,password:password},showError:false});if(mode==='register'){message.textContent='Verification email sent. Verify your address, then sign in.';return;}document.getElementById('account-gate').style.display='none';window.location.reload();}catch(e){message.textContent=e.message||'Could not complete account request.';}}
 // ===== GLOBALS =====
 var sseSource = null;
 var currentMonitorJob = null;
@@ -833,11 +850,13 @@ async function api(path, opts){
     } else if(opts.body){
       fetchOpts.body=opts.body;
     }
-    var r=await fetch(path,fetchOpts);
+    fetchOpts.credentials='include';
+    var r=await fetch(apiUrl(path),fetchOpts);
     if(!r.ok){
       var txt=await r.text().catch(function(){ return r.statusText; });
       var message=txt||'HTTP '+r.status;
       try{ var payload=JSON.parse(txt); if(payload.detail) message=payload.detail; }catch(e){}
+      if(r.status===401){showAccountGate();}
       throw new Error(message);
     }
     return await r.json();
@@ -845,6 +864,14 @@ async function api(path, opts){
     if(opts.showError!==false) showToast('API Error: '+e.message,'error');
     throw e;
   }
+}
+function showAccountGate(){var gate=document.getElementById('account-gate');if(gate)gate.style.display='flex';}
+async function logoutAccount(){try{await api('/api/auth/logout',{method:'POST',showError:false});window.location.reload();}catch(e){showToast('Could not sign out: '+e.message,'error');}}
+async function refreshAccountUsage(){try{var me=await api('/api/auth/me',{showError:false});if(me.authenticated){var label=document.getElementById('account-label');label.textContent=me.email+' · '+Math.floor((me.usage.remaining_seconds||0)/60)+' free min left today';}}catch(e){}}
+async function checkAccountAccess(){
+  var params=new URLSearchParams(window.location.search),verify=params.get('verify');
+  if(verify){var msg=document.getElementById('account-message');try{await api('/api/auth/verify?token='+encodeURIComponent(verify),{showError:false});msg.textContent='Email verified. You can now sign in.';setAccountMode('login');document.getElementById('account-gate').style.display='flex';history.replaceState({},'',window.location.pathname);}catch(e){msg.textContent=e.message;document.getElementById('account-gate').style.display='flex';return false;}return false;}
+  try{var me=await api('/api/auth/me',{showError:false});if(me.auth_required&&!me.authenticated){showAccountGate();return false;}if(me.authenticated){var label=document.getElementById('account-label');label.textContent=me.email+' · '+Math.floor((me.usage.remaining_seconds||0)/60)+' free min left today';label.style.display='inline';document.getElementById('account-logout').style.display='inline-flex';}return true;}catch(e){showAccountGate();return false;}
 }
 
 // ===== CLOCK =====
@@ -884,7 +911,7 @@ function initSSE(){
   var dot=document.getElementById('sse-dot');
   var lbl=document.getElementById('sse-label');
   try{
-    sseSource=new EventSource('/api/events');
+    sseSource=new EventSource(apiUrl('/api/events'),{withCredentials:true});
     sseSource.onopen=function(){ dot.classList.add('connected'); lbl.textContent='Live'; };
     sseSource.onerror=function(){ dot.classList.remove('connected'); lbl.textContent='Reconnecting…'; setTimeout(initSSE,5000); };
     sseSource.onmessage=function(e){ try{ handleSSE(JSON.parse(e.data)); }catch(err){} };
@@ -991,6 +1018,7 @@ function startUpload(){
       re.style.display='block';
       re.innerHTML='✅ Upload successful! Job ID: <strong>'+(res.job_id||'N/A')+'</strong> &nbsp;<button class="btn btn-ghost btn-sm" onclick="switchSection(\'queue\')">View Queue →</button>';
       showToast('Upload complete!','success');
+      refreshAccountUsage();
       _selectedFile=null;
       document.getElementById('file-input').value='';
     }else{
@@ -999,7 +1027,14 @@ function startUpload(){
     }
   };
   xhr.onerror=function(){ btn.disabled=false; showToast('Upload failed: Network error','error'); };
-  xhr.open('POST','/api/upload');
+  if(window.GTA_HOSTED){
+    fetch(apiUrl('/api/upload/presign'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:_selectedFile.name,content_type:_selectedFile.type||'application/octet-stream',size_bytes:_selectedFile.size})})
+      .then(function(r){return r.json().then(function(x){if(!r.ok)throw new Error(x.detail||'Could not start direct upload');return x;});})
+      .then(function(info){var put=new XMLHttpRequest();put.open('PUT',info.upload_url);put.setRequestHeader('Content-Type',info.content_type);put.upload.onprogress=function(e){if(e.lengthComputable){var p=Math.round(e.loaded/e.total*95);bar.style.width=p+'%';pct.textContent=p+'%';}};put.onload=function(){if(put.status<200||put.status>=300){btn.disabled=false;showToast('Object storage rejected the upload. Check bucket CORS configuration.','error');return;}bar.style.width='98%';fetch(apiUrl('/api/upload/complete'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({storage_key:info.storage_key,creator_id:creator,title:title,filename:_selectedFile.name})}).then(function(r){return r.json().then(function(x){if(!r.ok)throw new Error(x.detail||'Could not create processing job');return x;});}).then(function(res){bar.style.width='100%';pct.textContent='100%';document.getElementById('upload-result').style.display='block';document.getElementById('upload-result').innerHTML='✅ Upload successful! Job ID: <strong>'+esc(res.job_id)+'</strong> &nbsp;<button class="btn btn-ghost btn-sm" onclick="switchSection(\'queue\')">View Queue →</button>';_selectedFile=null;document.getElementById('file-input').value='';btn.disabled=false;showToast('Upload complete!','success');refreshAccountUsage();}).catch(function(e){btn.disabled=false;showToast('Upload failed: '+e.message,'error');});};put.onerror=function(){btn.disabled=false;showToast('Upload failed: storage network error','error');};put.send(_selectedFile);})
+      .catch(function(e){btn.disabled=false;showToast('Upload failed: '+e.message,'error');});
+    return;
+  }
+  xhr.open('POST',apiUrl('/api/upload'));xhr.withCredentials=true;
   xhr.send(fd);
 }
 
@@ -1061,6 +1096,7 @@ async function queueAction(action, jobId){
       : await api('/api/queue/'+safeId+'/'+action,{method:'POST',showError:false});
     if(action==='delete'&&result.removed!==true) throw new Error(result.detail||'The job was not removed.');
     showToast(action==='retry'?'Job queued for retry':action==='delete'?'Job deleted':'Job '+action+' successful','success');
+    refreshAccountUsage();
     loadQueue();
   }catch(e){ showToast('Could not '+action+' job: '+e.message,'error'); }
 }
@@ -1198,7 +1234,7 @@ function renderClipGrid(clips){
   var grid=document.getElementById('clip-grid');
   if(!clips.length){ grid.innerHTML='<div style="grid-column:1/-1" class="empty-state"><div class="empty-state-icon">📭</div><div>No clips found</div></div>'; return; }
   grid.innerHTML=clips.map(function(c){
-    var thumbUrl=c.thumbnail_url||('/thumb/'+c.id);
+    var thumbUrl=apiUrl(c.thumbnail_url||('/thumb/'+c.id));
     var clipStatus=c.status||(c.approval_status==='pending_review'?'pending':c.approval_status)||'pending';
     var clipStatusLabel=clipStatus==='pending'?'Pending Review':clipStatus;
     var clipDuration=c.duration_seconds!=null?c.duration_seconds:c.duration;
@@ -1231,7 +1267,7 @@ async function openClipModal(id){
     var clipStatusLabel=clipStatus==='pending'?'Pending Review':clipStatus;
     var clipDuration=c.duration_seconds!=null?c.duration_seconds:c.duration;
     document.getElementById('modal-title').textContent=c.title||'Clip Detail';
-    phone.innerHTML='<video controls src="/video/'+id+'" style="width:100%;height:100%;object-fit:cover" onerror="this.outerHTML=\'<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:32px&quot;>🎬</div>\'"></video>';
+    phone.innerHTML='<video controls src="'+esc(apiUrl('/video/'+id))+'" style="width:100%;height:100%;object-fit:cover" onerror="this.outerHTML=\'<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:32px&quot;>🎬</div>\'"></video>';
     details.innerHTML='<div>'
       +'<div class="form-group"><div class="form-label">Title</div><div style="font-size:15px;font-weight:600">'+esc(c.title||'—')+'</div></div>'
       +(c.hook_text?'<div class="form-group"><div class="form-label">Hook</div><div>'+esc(c.hook_text)+'</div></div>':'')
@@ -1319,7 +1355,7 @@ function renderReviewPanel(c){
   var panel=document.getElementById('review-panel');
   panel.innerHTML='<div class="row" style="gap:24px;flex-wrap:wrap">'
     +'<div><div class="phone-mockup">'
-    +'<video controls src="/video/'+c.id+'" style="width:100%;height:100%;object-fit:cover"></video>'
+    +'<video controls src="'+esc(apiUrl('/video/'+c.id))+'" style="width:100%;height:100%;object-fit:cover"></video>'
     +'</div></div>'
     +'<div style="flex:1;min-width:200px">'
     +'<div class="form-group"><label class="form-label">Title</label><input type="text" class="form-control" id="rv-title" value="'+esc(c.title||'')+'"></div>'
@@ -1497,7 +1533,7 @@ function renderRightsAgreements(){
       +(status==='active'?'<button class="btn btn-red btn-sm" onclick="revokeRightsAgreement(&quot;'+esc(a.id)+'&quot;)">Revoke</button>':'')+'</div></div>'
       +'<div style="font-size:11px;color:var(--text-dim);margin-top:7px">Authorized by '+esc(a.authorized_by||'—')+' · Valid through '+esc(expiry)+' · Revenue share '+Number(a.rev_share_percent||0)+'%</div>'
       +(a.notes?'<div style="font-size:11px;color:var(--text-dim);margin-top:5px">'+esc(a.notes)+'</div>':'')
-      +(a.document_url?'<a href="'+esc(a.document_url)+'" target="_blank" rel="noopener" style="display:inline-block;font-size:11px;margin-top:6px">📄 '+esc(a.documentation_name||'View permission document')+'</a>':'<div style="font-size:11px;color:var(--red);margin-top:6px">Permission document unavailable</div>')
+      +(a.document_url?'<a href="'+esc(apiUrl(a.document_url))+'" target="_blank" rel="noopener" style="display:inline-block;font-size:11px;margin-top:6px">📄 '+esc(a.documentation_name||'View permission document')+'</a>':'<div style="font-size:11px;color:var(--red);margin-top:6px">Permission document unavailable</div>')
       +'</div>';
   }).join('');
 }
@@ -1549,8 +1585,14 @@ async function saveRightsAgreement(){
   var button=document.getElementById('rights-save-button');
   button.disabled=true;
   try{
-    var path=agreementId?'/api/rights/'+encodeURIComponent(agreementId):'/api/creators/'+encodeURIComponent(rightsCreatorId)+'/rights';
-    await api(path,{method:agreementId?'PUT':'POST',body:form,showError:false});
+    if(window.GTA_HOSTED){
+      var docKey=null;
+      if(fileInput.files.length){var file=fileInput.files[0];var signed=await api('/api/rights/presign',{method:'POST',body:{filename:file.name,content_type:file.type||'application/octet-stream',size_bytes:file.size},showError:false});await new Promise(function(resolve,reject){var xhr=new XMLHttpRequest();xhr.open('PUT',signed.upload_url);xhr.setRequestHeader('Content-Type',signed.content_type);xhr.onload=function(){if(xhr.status>=200&&xhr.status<300)resolve();else reject(new Error('Object storage rejected the permission document.'));};xhr.onerror=function(){reject(new Error('Permission document upload failed.'));};xhr.send(file);});docKey=signed.storage_key;}
+      await api('/api/rights/complete',{method:'POST',body:{creator_id:rightsCreatorId,agreement_id:agreementId||null,agreement_type:document.getElementById('rights-type').value,status:document.getElementById('rights-status').value,authorized_by:authorizedBy,valid_to:document.getElementById('rights-valid-to').value||null,rev_share_percent:parseFloat(document.getElementById('rights-rev-share').value||'0'),notes:document.getElementById('rights-notes').value||null,document_key:docKey},showError:false});
+    }else{
+      var path=agreementId?'/api/rights/'+encodeURIComponent(agreementId):'/api/creators/'+encodeURIComponent(rightsCreatorId)+'/rights';
+      await api(path,{method:agreementId?'PUT':'POST',body:form,showError:false});
+    }
     showToast(agreementId?'Rights agreement updated':'Rights agreement added','success');
     newRightsAgreement();
     await loadRightsAgreements();
@@ -1622,8 +1664,8 @@ async function loadAISettings(){
     document.getElementById('setting-reasoning-model').value=d.cloud_reasoning_model||'';
     document.getElementById('setting-vision-model').value=d.cloud_vision_model||'';
     document.getElementById('setting-api-key').value='';
-    document.getElementById('setting-api-key').placeholder=d.api_key_configured?'Saved securely — leave blank to keep it':'Paste API key';
-    document.getElementById('setting-key-status').textContent=d.api_key_configured?'A key is saved encrypted on this Windows account. Leave blank to keep it.':'No API key saved.';
+    document.getElementById('setting-api-key').placeholder=d.user_api_key_configured?'Saved securely — leave blank to keep it':'Paste API key';
+    document.getElementById('setting-key-status').textContent=d.user_api_key_configured?'Your API key is encrypted and saved. Leave blank to keep it.':(d.platform_key_available?'The app-managed provider key is available. You may enter a personal key to use your own provider account.':'No API key saved.');
     document.getElementById('setting-clear-key').checked=false;
   }catch(e){}
 }
@@ -1644,12 +1686,12 @@ async function saveAISettings(){
 async function testAISettings(){
   var status=document.getElementById('setting-test-status');
   status.textContent='Checking endpoint…';
-  var body={cloud_base_url:document.getElementById('setting-cloud-url').value.trim(),cloud_api_key:document.getElementById('setting-api-key').value};
+  var body={cloud_base_url:document.getElementById('setting-cloud-url').value.trim(),cloud_api_key:document.getElementById('setting-api-key').value,cloud_reasoning_model:document.getElementById('setting-reasoning-model').value.trim(),cloud_vision_model:document.getElementById('setting-vision-model').value.trim()};
   try{
     var d=await api('/api/settings/ai/test',{method:'POST',body:body});
-    status.textContent='Connected — '+d.model_count+' model(s) available.';
+    var checked=Object.keys(d.inference_checks||{});status.textContent='Connected — '+d.model_count+' model(s); inference verified: '+(checked.length?checked.join(', '):'no models selected');
     status.style.color='var(--green)';
-  }catch(e){ status.textContent='Could not connect. Check endpoint and key.'; status.style.color='var(--red)'; }
+  }catch(e){ status.textContent=e.message||'Connection test failed.'; status.style.color='var(--red)'; }
 }
 async function saveModelSelection(){
   var body={reasoning_model:document.getElementById('reasoning-model-select').value,vision_model:document.getElementById('vision-model-select').value};
@@ -1683,9 +1725,7 @@ async function loadAnalytics(){
 
 // ===== INIT =====
 window.addEventListener('DOMContentLoaded',function(){
-  fetchOverview();
-  initSSE();
-  setInterval(fetchOverview,10000);
+  checkAccountAccess().then(function(allowed){if(!allowed)return;fetchOverview();initSSE();setInterval(fetchOverview,10000);if(window.GTA_HOSTED)setInterval(refreshAccountUsage,30000);});
 });
 </script>
 </body>

@@ -1,0 +1,91 @@
+services:
+  - type: web
+    name: gta-clip-command-api
+    runtime: python
+    plan: 1c-2g
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn src.dashboard.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - fromGroup: gta-clip-command-hosted
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gta-clip-command-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: gta-clip-command-queue
+          property: connectionString
+      - key: GROQ_API_KEY
+        sync: false
+      - key: STORAGE_BUCKET
+        sync: false
+      - key: STORAGE_ENDPOINT_URL
+        sync: false
+      - key: STORAGE_ACCESS_KEY
+        sync: false
+      - key: STORAGE_SECRET_KEY
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+
+  - type: worker
+    name: gta-clip-command-worker
+    runtime: python
+    plan: 2c-4g
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m scripts.run_worker
+    envVars:
+      - fromGroup: gta-clip-command-hosted
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gta-clip-command-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: gta-clip-command-queue
+          property: connectionString
+      - key: GROQ_API_KEY
+        sync: false
+      - key: STORAGE_BUCKET
+        sync: false
+      - key: STORAGE_ENDPOINT_URL
+        sync: false
+      - key: STORAGE_ACCESS_KEY
+        sync: false
+      - key: STORAGE_SECRET_KEY
+        sync: false
+
+  - type: keyvalue
+    name: gta-clip-command-queue
+    plan: starter
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
+
+databases:
+  - name: gta-clip-command-db
+    plan: basic-256mb
+    databaseName: gta_clip_command
+    user: gta_clip_command
+
+envVarGroups:
+  - name: gta-clip-command-hosted
+    envVars:
+      - key: AUTH_ENABLED
+        value: "true"
+      - key: FRONTEND_ORIGIN
+        value: https://your-project.vercel.app
+      - key: CLOUD_KEY_ENCRYPTION_KEY
+        generateValue: true
+      - key: STORAGE_REGION
+        value: auto

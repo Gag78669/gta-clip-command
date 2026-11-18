@@ -13,6 +13,7 @@ __pycache__/
 
 # Runtime footage, agreements, databases, logs, caches, and exports
 data/
+frontend_dist/
 *.log
 
 # OS/editor files
