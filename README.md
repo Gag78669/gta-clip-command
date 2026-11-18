@@ -131,7 +131,6 @@ Set these Render environment values after creating the service:
 | `STORAGE_BUCKET` | R2 bucket name |
 | `STORAGE_ENDPOINT_URL` | `https://<account-id>.r2.cloudflarestorage.com` |
 | `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` | R2 S3 token credentials (keep secret) |
-| `GROQ_API_KEY` | Optional platform key; users can configure their own cloud key in Settings |
 | `CLOUD_KEY_ENCRYPTION_KEY` | Fernet key generated once and preserved across deploys (command below) |
 
 Keep `AUTH_ENABLED=true`, `DAILY_FREE_SECONDS=1200` and `MAX_VIDEO_SECONDS=600`. Do not set `REDIS_URL` for the free single-service deployment. The service uses PostgreSQL-backed job records and its local worker. The app measures video duration with FFprobe, caps a source video at 10 minutes, reserves measured duration atomically, and limits each account to 20 minutes per UTC day.
