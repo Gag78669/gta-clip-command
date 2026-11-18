@@ -9,7 +9,8 @@ import os
 import subprocess
 import sys
 import threading
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
+import math
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
@@ -78,6 +79,7 @@ class CreatorCreateRequest(BaseModel):
 
 
 class CreatorUpdateRequest(BaseModel):
+    handle: Optional[str] = None
     name: Optional[str] = None
     channel_url: Optional[str] = None
     platform: Optional[str] = None
@@ -116,6 +118,58 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+RIGHTS_AGREEMENT_TYPES = {"exclusive", "non_exclusive", "revenue_share", "fair_use_reviewed"}
+RIGHTS_STATUSES = {"active", "pending", "expired", "revoked"}
+RIGHTS_DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx", ".png", ".jpg", ".jpeg"}
+MAX_RIGHTS_DOCUMENT_BYTES = 20 * 1024 * 1024
+
+
+def _rights_document_payload(agreement: RightsAgreement) -> dict[str, Any]:
+    doc_path = Path(agreement.documentation_path) if agreement.documentation_path else None
+    effective_status = agreement.status
+    if agreement.status == "active" and agreement.valid_to is not None and agreement.valid_to < now_utc():
+        effective_status = "expired"
+    return {
+        "id": agreement.id,
+        "agreement_type": agreement.agreement_type,
+        "status": agreement.status,
+        "effective_status": effective_status,
+        "valid_from": agreement.valid_from.isoformat() if agreement.valid_from else None,
+        "valid_to": agreement.valid_to.isoformat() if agreement.valid_to else None,
+        "rev_share_percent": agreement.rev_share_percent,
+        "documentation_name": doc_path.name if doc_path else None,
+        "documentation_available": bool(doc_path and doc_path.is_file()),
+        "document_url": f"/api/rights/{agreement.id}/document" if doc_path and doc_path.is_file() else None,
+        "authorized_by": agreement.authorized_by,
+        "notes": agreement.notes,
+        "created_at": agreement.created_at.isoformat() if agreement.created_at else None,
+    }
+
+
+def _rights_expiry_date(value: str | None) -> datetime | None:
+    if not value or not value.strip():
+        return None
+    try:
+        return datetime.combine(date.fromisoformat(value.strip()), time.max)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Valid until must be a date in YYYY-MM-DD format") from exc
+
+
+async def _archive_rights_document(file: UploadFile, creator_id: str, agreement_id: str) -> Path:
+    extension = Path(file.filename or "").suffix.lower()
+    if extension not in RIGHTS_DOCUMENT_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="Permission documents must be PDF, DOC, DOCX, PNG, JPG, or JPEG")
+    contents = await file.read(MAX_RIGHTS_DOCUMENT_BYTES + 1)
+    if not contents:
+        raise HTTPException(status_code=422, detail="The permission document is empty")
+    if len(contents) > MAX_RIGHTS_DOCUMENT_BYTES:
+        raise HTTPException(status_code=413, detail="Permission documents must be 20 MB or smaller")
+    settings.agreements_dir.mkdir(parents=True, exist_ok=True)
+    archived = settings.agreements_dir / f"{creator_id}_{agreement_id}{extension}"
+    archived.write_bytes(contents)
+    return archived
 
 
 def _ffprobe_duration(path: Path) -> float:
@@ -338,10 +392,8 @@ def get_queue(db: Session = Depends(get_db)):
         .order_by(ProcessingJob.created_at.desc())
         .all()
     )
-    worker = _get_worker()
     result = []
     for j in jobs:
-        st = worker.get_status(j.id) or {}
         media = db.query(MediaSource).filter(MediaSource.id == j.media_id).first()
         creator = db.query(Creator).filter(Creator.id == media.creator_id).first() if media else None
         result.append({
@@ -351,8 +403,11 @@ def get_queue(db: Session = Depends(get_db)):
             "creator_handle": creator.handle if creator else None,
             "duration": media.duration_seconds if media else None,
             "status": j.status,
-            "stage": st.get("stage", j.current_stage),
-            "progress": st.get("progress", j.progress_percent),
+            # SQLite is the source of truth. The worker's in-memory snapshot can
+            # lag while run_pipeline advances its own checkpoints.
+            "stage": j.current_stage,
+            "progress": j.progress_percent,
+            "current_model": j.current_model,
             "candidate_count": getattr(j, "candidate_count", 0) or 0,
             "clip_count": getattr(j, "clip_count", 0) or 0,
             "error": j.error_message,
@@ -397,8 +452,33 @@ def queue_cancel(job_id: str):
 
 
 @app.post("/api/queue/{job_id}/retry")
-def queue_retry(job_id: str):
-    _get_worker().retry(job_id)
+def queue_retry(job_id: str, db: Session = Depends(get_db)):
+    job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in ("failed", "cancelled"):
+        raise HTTPException(status_code=409, detail=f"Cannot retry job with status '{job.status}'")
+    if db.query(FinalClip).filter(FinalClip.job_id == job_id).count():
+        raise HTTPException(status_code=409, detail="This job already produced clips. Review those clips instead of retrying.")
+    media = db.query(MediaSource).filter(MediaSource.id == job.media_id).first()
+    creator = db.query(Creator).filter(Creator.id == media.creator_id).first() if media else None
+    if not media or not creator:
+        raise HTTPException(status_code=409, detail="The source video or creator for this job is missing")
+
+    job.status = "queued"
+    job.current_stage = "intake"
+    job.progress_percent = 0
+    job.candidate_count = 0
+    job.clip_count = 0
+    job.error_message = None
+    job.started_at = None
+    job.completed_at = None
+    job.current_model = None
+    job.stage_logs = None
+    job.stage_states = None
+    db.query(CandidateClip).filter(CandidateClip.job_id == job_id).delete(synchronize_session=False)
+    db.commit()
+    _get_worker().enqueue(job.id, media.id, creator.handle, media.file_path)
     return {"status": "queued", "job_id": job_id}
 
 
@@ -409,8 +489,12 @@ def queue_delete(job_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Job not found")
     if job.status not in ("queued", "failed", "cancelled"):
         raise HTTPException(status_code=409, detail=f"Cannot delete job with status '{job.status}'")
+    if db.query(FinalClip).filter(FinalClip.job_id == job_id).count():
+        raise HTTPException(status_code=409, detail="This job has generated clips. Review or export them before deleting the job.")
     removed = _get_worker().remove(job_id)
-    return {"removed": removed, "job_id": job_id}
+    db.delete(job)
+    db.commit()
+    return {"removed": True, "worker_state_removed": removed, "job_id": job_id}
 
 
 # ---------------------------------------------------------------------------
@@ -434,6 +518,44 @@ def get_monitor(job_id: str, db: Session = Depends(get_db)):
     except Exception:
         stage_logs = []
 
+    stage_order = ["intake", "audio_demux", "transcription", "signals", "fusion", "ai_evaluation", "composition", "finalize"]
+    current = job.current_stage if job.current_stage in stage_order else "intake"
+    current_index = stage_order.index(current)
+    if not stage_states or not any(name in stage_states for name in stage_order):
+        stage_states = {}
+        for index, stage_name in enumerate(stage_order):
+            if job.status == "completed" or (job.status != "queued" and index < current_index):
+                stage_states[stage_name] = "completed"
+            elif index == current_index:
+                stage_states[stage_name] = "failed" if job.status == "failed" else ("cancelled" if job.status == "cancelled" else ("paused" if job.status == "paused" else ("completed" if job.status == "completed" else ("pending" if job.status == "queued" else "running"))))
+            else:
+                stage_states[stage_name] = "pending"
+
+    worker_state = _get_worker().get_status(job_id) or {}
+    if worker_state.get("logs"):
+        stage_logs = worker_state["logs"][-300:]
+    else:
+        job_log_path = Path(__file__).resolve().parent.parent.parent / "data" / "logs" / "jobs" / f"{job_id}.log"
+        if job_log_path.is_file():
+            try:
+                stage_logs = job_log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-300:]
+            except OSError:
+                pass
+        else:
+            # Compatibility for jobs started before per-job logging was added.
+            # The worker is single-threaded, so each start marker bounds one job.
+            shared_log = Path(__file__).resolve().parent.parent.parent / "data" / "logs" / "pipeline.log"
+            if shared_log.is_file():
+                try:
+                    lines = shared_log.read_text(encoding="utf-8", errors="replace").splitlines()
+                    start_marker = f"Starting pipeline for job {job_id}"
+                    start_at = next((i for i in range(len(lines) - 1, -1, -1) if start_marker in lines[i]), None)
+                    if start_at is not None:
+                        end_at = next((i for i in range(start_at + 1, len(lines)) if "Starting pipeline for job job_" in lines[i]), len(lines))
+                        stage_logs = lines[start_at:end_at][-300:]
+                except OSError:
+                    pass
+
     return {
         "job_id": job_id,
         "status": job.status,
@@ -444,6 +566,7 @@ def get_monitor(job_id: str, db: Session = Depends(get_db)):
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
         "error_message": job.error_message,
+        "title": job.media.title if job.media else None,
     }
 
 
@@ -504,6 +627,10 @@ def list_clips(db: Session = Depends(get_db)):
             "optimal_end": c.optimal_end,
             "layout_mode": c.layout_mode,
             "approval_status": c.approval_status,
+            "status": "pending" if c.approval_status == "pending_review" else c.approval_status,
+            "duration_seconds": c.duration,
+            "creator_handle": c.creator.handle if c.creator else None,
+            "export_path": c.output_path,
             "video_url": f"/video/{c.id}" if has_video else None,
             "thumbnail_url": f"/thumb/{c.id}" if has_thumb else None,
         })
@@ -678,7 +805,14 @@ def get_library(
             "humor_score": c.humor_score,
             "action_score": c.action_score,
             "duration": c.duration,
+            "duration_seconds": c.duration,
+            "optimal_start": c.optimal_start,
+            "optimal_end": c.optimal_end,
             "approval_status": c.approval_status,
+            "status": "pending" if c.approval_status == "pending_review" else c.approval_status,
+            "thumbnail_url": f"/thumb/{c.id}" if c.thumbnail_path and Path(c.thumbnail_path).exists() else None,
+            "video_url": f"/video/{c.id}" if c.output_path and Path(c.output_path).exists() else None,
+            "export_path": c.output_path,
             "created_at": c.created_at.isoformat() if c.created_at else None,
         })
     return {"clips": result}
@@ -696,10 +830,21 @@ def list_creators(db: Session = Depends(get_db)):
     for cr in creators:
         agreements = (
             db.query(RightsAgreement)
-            .filter(RightsAgreement.creator_id == cr.id, RightsAgreement.status == "active")
+            .filter(RightsAgreement.creator_id == cr.id)
+            .order_by(RightsAgreement.created_at.desc())
             .all()
         )
-        active_agree = next((a for a in agreements if a.valid_to is None or a.valid_to >= now), None)
+        active_agree = next((a for a in agreements if a.status == "active" and (a.valid_to is None or a.valid_to >= now)), None)
+        if active_agree:
+            rights_status = "active"
+        elif any(a.status == "pending" for a in agreements):
+            rights_status = "pending"
+        elif any(a.status == "expired" or (a.valid_to is not None and a.valid_to < now) for a in agreements):
+            rights_status = "expired"
+        elif any(a.status == "revoked" for a in agreements):
+            rights_status = "revoked"
+        else:
+            rights_status = "none"
         results.append({
             "id": cr.id,
             "handle": cr.handle,
@@ -711,12 +856,149 @@ def list_creators(db: Session = Depends(get_db)):
             "branding_guidelines": cr.branding_guidelines,
             "authorized_platforms": cr.authorized_platforms,
             "has_active_rights": active_agree is not None,
-            "rights_status": "active" if active_agree else ("expired" if agreements else "none"),
+            "rights_status": rights_status,
             "agreement_type": active_agree.agreement_type if active_agree else None,
             "rev_share_percent": active_agree.rev_share_percent if active_agree else 0.0,
             "clip_count": db.query(FinalClip).filter(FinalClip.creator_id == cr.id).count(),
         })
     return {"creators": results}
+
+
+@app.get("/api/creators/{creator_id}/rights")
+def list_creator_rights(creator_id: str, db: Session = Depends(get_db)):
+    creator = db.query(Creator).filter(Creator.id == creator_id).first()
+    if not creator:
+        raise HTTPException(status_code=404, detail="Creator not found")
+    agreements = (
+        db.query(RightsAgreement)
+        .filter(RightsAgreement.creator_id == creator_id)
+        .order_by(RightsAgreement.created_at.desc())
+        .all()
+    )
+    return {"creator_id": creator.id, "creator_handle": creator.handle,
+            "agreements": [_rights_document_payload(a) for a in agreements]}
+
+
+@app.post("/api/creators/{creator_id}/rights", status_code=201)
+async def create_creator_rights(
+    creator_id: str,
+    agreement_type: str = Form(...),
+    authorized_by: str = Form(...),
+    status: str = Form("active"),
+    valid_to: Optional[str] = Form(None),
+    rev_share_percent: float = Form(0.0),
+    notes: Optional[str] = Form(None),
+    document: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    creator = db.query(Creator).filter(Creator.id == creator_id).first()
+    if not creator:
+        raise HTTPException(status_code=404, detail="Creator not found")
+    if agreement_type not in RIGHTS_AGREEMENT_TYPES:
+        raise HTTPException(status_code=422, detail="Unsupported agreement type")
+    if status not in RIGHTS_STATUSES:
+        raise HTTPException(status_code=422, detail="Unsupported rights status")
+    if not authorized_by.strip():
+        raise HTTPException(status_code=422, detail="Authorized by is required")
+    if not math.isfinite(rev_share_percent) or not 0 <= rev_share_percent <= 100:
+        raise HTTPException(status_code=422, detail="Revenue share must be between 0 and 100")
+
+    expiry = _rights_expiry_date(valid_to)
+    agreement_id = generate_id("ra")
+    archived = await _archive_rights_document(document, creator_id, agreement_id)
+    agreement = RightsAgreement(
+        id=agreement_id,
+        creator_id=creator_id,
+        agreement_type=agreement_type,
+        status=status,
+        valid_to=expiry,
+        rev_share_percent=rev_share_percent,
+        documentation_path=str(archived),
+        authorized_by=authorized_by.strip(),
+        notes=notes.strip() if notes else None,
+    )
+    try:
+        db.add(agreement)
+        db.commit()
+        db.refresh(agreement)
+    except Exception:
+        db.rollback()
+        archived.unlink(missing_ok=True)
+        raise
+    return _rights_document_payload(agreement)
+
+
+@app.put("/api/rights/{agreement_id}")
+async def update_creator_rights(
+    agreement_id: str,
+    agreement_type: Optional[str] = Form(None),
+    authorized_by: Optional[str] = Form(None),
+    status: Optional[str] = Form(None),
+    valid_to: Optional[str] = Form(None),
+    rev_share_percent: Optional[float] = Form(None),
+    notes: Optional[str] = Form(None),
+    document: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db),
+):
+    agreement = db.query(RightsAgreement).filter(RightsAgreement.id == agreement_id).first()
+    if not agreement:
+        raise HTTPException(status_code=404, detail="Rights agreement not found")
+    if agreement_type is not None:
+        if agreement_type not in RIGHTS_AGREEMENT_TYPES:
+            raise HTTPException(status_code=422, detail="Unsupported agreement type")
+        agreement.agreement_type = agreement_type
+    if status is not None:
+        if status not in RIGHTS_STATUSES:
+            raise HTTPException(status_code=422, detail="Unsupported rights status")
+        agreement.status = status
+    if authorized_by is not None:
+        if not authorized_by.strip():
+            raise HTTPException(status_code=422, detail="Authorized by is required")
+        agreement.authorized_by = authorized_by.strip()
+    if valid_to is not None:
+        agreement.valid_to = _rights_expiry_date(valid_to)
+    if rev_share_percent is not None:
+        if not math.isfinite(rev_share_percent) or not 0 <= rev_share_percent <= 100:
+            raise HTTPException(status_code=422, detail="Revenue share must be between 0 and 100")
+        agreement.rev_share_percent = rev_share_percent
+    if notes is not None:
+        agreement.notes = notes.strip() or None
+
+    archived = None
+    if document is not None and document.filename:
+        archived = await _archive_rights_document(document, agreement.creator_id, agreement_id)
+        agreement.documentation_path = str(archived)
+    try:
+        db.commit()
+        db.refresh(agreement)
+    except Exception:
+        db.rollback()
+        if archived:
+            archived.unlink(missing_ok=True)
+        raise
+    return _rights_document_payload(agreement)
+
+
+@app.post("/api/rights/{agreement_id}/revoke")
+def revoke_creator_rights(agreement_id: str, db: Session = Depends(get_db)):
+    agreement = db.query(RightsAgreement).filter(RightsAgreement.id == agreement_id).first()
+    if not agreement:
+        raise HTTPException(status_code=404, detail="Rights agreement not found")
+    agreement.status = "revoked"
+    db.commit()
+    return _rights_document_payload(agreement)
+
+
+@app.get("/api/rights/{agreement_id}/document")
+def get_rights_document(agreement_id: str, db: Session = Depends(get_db)):
+    agreement = db.query(RightsAgreement).filter(RightsAgreement.id == agreement_id).first()
+    if not agreement or not agreement.documentation_path:
+        raise HTTPException(status_code=404, detail="Permission document not found")
+    document = Path(agreement.documentation_path).resolve()
+    agreements_root = settings.agreements_dir.resolve()
+    if not document.is_relative_to(agreements_root) or not document.is_file():
+        raise HTTPException(status_code=404, detail="Archived permission document is unavailable")
+    return FileResponse(document, filename=document.name)
 
 
 @app.post("/api/creators", status_code=201)
@@ -744,6 +1026,14 @@ def update_creator(creator_id: str, req: CreatorUpdateRequest, db: Session = Dep
     cr = db.query(Creator).filter(Creator.id == creator_id).first()
     if not cr:
         raise HTTPException(status_code=404, detail="Creator not found")
+    if req.handle is not None:
+        handle = req.handle.strip()
+        if not handle:
+            raise HTTPException(status_code=422, detail="Creator handle is required")
+        duplicate = db.query(Creator).filter(Creator.handle == handle, Creator.id != creator_id).first()
+        if duplicate:
+            raise HTTPException(status_code=409, detail="Creator handle already exists")
+        cr.handle = handle
     if req.name is not None:
         cr.name = req.name
     if req.channel_url is not None:
@@ -767,13 +1057,17 @@ def delete_creator(creator_id: str, db: Session = Depends(get_db)):
     cr = db.query(Creator).filter(Creator.id == creator_id).first()
     if not cr:
         raise HTTPException(status_code=404, detail="Creator not found")
-    approved_clips = (
+    clips = (
         db.query(FinalClip)
-        .filter(FinalClip.creator_id == creator_id, FinalClip.approval_status == "approved")
+        .filter(FinalClip.creator_id == creator_id)
         .count()
     )
-    if approved_clips > 0:
-        raise HTTPException(status_code=409, detail="Creator has approved clips; cannot delete")
+    media_count = db.query(MediaSource).filter(MediaSource.creator_id == creator_id).count()
+    if clips or media_count:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Creator has {media_count} source video(s) and {clips} clip(s). Remove those records first; creator deletion is blocked to protect them.",
+        )
     db.delete(cr)
     db.commit()
     return {"status": "deleted", "creator_id": creator_id}

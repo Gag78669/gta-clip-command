@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import queue
 import sys
 import threading
@@ -227,11 +228,35 @@ class PipelineWorker:
         self._update_db_status(job_id, "running", started_at=_now())
         self._broadcast({"type": "job_started", "job_id": job_id})
 
+        stop_progress_watch = threading.Event()
+        progress_watch = threading.Thread(
+            target=self._watch_db_progress,
+            args=(job_id, stop_progress_watch),
+            daemon=True,
+            name=f"progress-{job_id}",
+        )
+        log_handlers: list[tuple[logging.Logger, logging.Handler]] = []
         try:
             # Import run_pipeline lazily to avoid circular import issues at module load
             import importlib
             pipeline_module = importlib.import_module("scripts.run_pipeline")
             run_pipeline = pipeline_module.run_pipeline
+
+            # Pipeline loggers do not propagate to the root logger, so subscribe
+            # directly to the project loggers and keep a per-job durable log.
+            from src.core.logger import _LOGGERS
+            job_log_path = Path("data/logs/jobs") / f"{job_id}.log"
+            job_log_path.parent.mkdir(parents=True, exist_ok=True)
+            job_handler = logging.FileHandler(job_log_path, encoding="utf-8")
+            job_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
+            stream_handler = _JobEventLogHandler(self, job_id)
+            for project_logger in list(_LOGGERS.values()):
+                project_logger.addHandler(job_handler)
+                project_logger.addHandler(stream_handler)
+                log_handlers.append((project_logger, job_handler))
+                log_handlers.append((project_logger, stream_handler))
+
+            progress_watch.start()
 
             # Wrap run_pipeline with pause/cancel checkpoints
             # We rely on run_pipeline being synchronous and returning final_clips list
@@ -281,6 +306,42 @@ class PipelineWorker:
             self._update_job_state(job_id, status="failed", error=error_msg)
             self._update_db_status(job_id, "failed", completed_at=_now(), error_message=error_msg)
             self._broadcast({"type": "job_failed", "job_id": job_id, "error": error_msg})
+        finally:
+            stop_progress_watch.set()
+            if progress_watch.is_alive():
+                progress_watch.join(timeout=2)
+            for project_logger, handler in log_handlers:
+                project_logger.removeHandler(handler)
+            for handler in {handler for _, handler in log_handlers}:
+                handler.close()
+
+    def _watch_db_progress(self, job_id: str, stop_event: threading.Event) -> None:
+        """Keep in-memory state and SSE clients aligned with pipeline DB checkpoints."""
+        while not stop_event.wait(1):
+            try:
+                with get_db_context() as db:
+                    job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
+                    if not job:
+                        return
+                    snapshot = {
+                        "status": job.status,
+                        "stage": job.current_stage,
+                        "progress": job.progress_percent,
+                        "candidate_count": job.candidate_count,
+                        "clip_count": job.clip_count,
+                        "error": job.error_message,
+                    }
+                with self._lock:
+                    state = self._state.get(job_id)
+                    if state is None:
+                        return
+                    changed = any(state.get(key) != value for key, value in snapshot.items())
+                    if changed:
+                        state.update(snapshot)
+                if changed:
+                    self._broadcast({"type": "job_update", "job_id": job_id, **snapshot})
+            except Exception as exc:
+                logger.warning("Could not refresh progress for %s: %s", job_id, exc)
 
     def _pipeline_checkpoint(self, job_id: str) -> None:
         """Wait while paused and stop cleanly when cancelled at a safe boundary."""
@@ -348,3 +409,26 @@ def get_worker() -> PipelineWorker:
             if _worker_instance is None:
                 _worker_instance = PipelineWorker()
     return _worker_instance
+
+
+class _JobEventLogHandler(logging.Handler):
+    """Fan out one job's pipeline logs to Monitor over SSE and retain a short buffer."""
+
+    def __init__(self, worker: PipelineWorker, job_id: str) -> None:
+        super().__init__(logging.INFO)
+        self.worker = worker
+        self.job_id = job_id
+        self.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            line = self.format(record)
+            with self.worker._lock:
+                state = self.worker._state.get(self.job_id)
+                if state is not None:
+                    logs = state.setdefault("logs", [])
+                    logs.append(line)
+                    del logs[:-300]
+            self.worker._broadcast({"type": "log_line", "job_id": self.job_id, "message": line})
+        except Exception:
+            self.handleError(record)

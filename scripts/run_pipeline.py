@@ -109,6 +109,11 @@ def run_pipeline(
         # STAGE 2: AUDIO DEMUXING
         # -------------------------------------------------------------
         logger.info("STAGE 2: Fast Audio Demuxing (16kHz Mono)...")
+        with get_db_context() as db:
+            j = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
+            if j:
+                j.current_stage = "audio_demux"
+                j.progress_percent = 10
         safe_checkpoint()
         extractor = AudioExtractor()
         whisper_wav = extractor.extract_whisper_audio(video_path, output_name=f"{media_id}_16k")

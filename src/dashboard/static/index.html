@@ -117,6 +117,9 @@ tbody tr:hover{background:rgba(255,255,255,.02)}
 .badge-paused{background:rgba(0,240,255,.15);color:var(--cyan)}
 .badge-cancelled{background:rgba(107,114,148,.15);color:var(--text-muted)}
 .badge-pending{background:rgba(255,215,0,.15);color:var(--yellow)}
+.badge-pending_review{background:rgba(255,215,0,.15);color:var(--yellow)}
+.badge-active{background:rgba(0,255,136,.15);color:var(--green)}
+.badge-expired,.badge-revoked{background:rgba(255,68,85,.15);color:var(--red)}
 .badge-approved{background:rgba(0,255,136,.15);color:var(--green)}
 .badge-rejected{background:rgba(255,68,85,.15);color:var(--red)}
 
@@ -195,11 +198,11 @@ textarea.form-control{resize:vertical;min-height:80px}
 .log-line.success{color:var(--green)}
 
 /* ===== CLIP GRID ===== */
-.clip-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.clip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;align-items:start}
 .clip-card{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;cursor:pointer;transition:all .2s}
 .clip-card:hover{border-color:var(--pink);transform:translateY(-2px);box-shadow:0 8px 24px rgba(255,42,133,.15)}
-.clip-thumb{position:relative;width:100%;padding-top:177.78%;background:var(--panel);overflow:hidden}
-.clip-thumb img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover}
+.clip-thumb{position:relative;width:100%;height:clamp(220px,27vw,320px);background:var(--panel);overflow:hidden}
+.clip-thumb img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;background:#050609}
 .clip-thumb-placeholder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:40px;color:var(--text-muted)}
 .clip-info{padding:12px}
 .clip-title{font-weight:600;font-size:13px;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -238,6 +241,10 @@ textarea.form-control{resize:vertical;min-height:80px}
 #creator-form-overlay{display:none;position:fixed;inset:0;background:rgba(5,6,10,.7);z-index:500;backdrop-filter:blur(2px)}
 #creator-form-overlay.open{display:flex;justify-content:flex-end}
 #creator-form-panel{width:440px;height:100%;background:var(--card);border-left:1px solid var(--border);overflow-y:auto;padding:24px;animation:slideIn .25s ease}
+#rights-overlay{display:none;position:fixed;inset:0;background:rgba(5,6,10,.7);z-index:510;backdrop-filter:blur(2px)}
+#rights-overlay.open{display:flex;justify-content:flex-end}
+#rights-panel{width:min(620px,100%);height:100%;background:var(--card);border-left:1px solid var(--border);overflow-y:auto;padding:24px;animation:slideIn .25s ease}
+.rights-agreement{border:1px solid var(--border);border-radius:8px;background:var(--panel);padding:12px;margin:10px 0}
 @keyframes slideIn{from{transform:translateX(100%)}to{transform:none}}
 
 /* ===== USAGE BARS ===== */
@@ -454,6 +461,7 @@ textarea.form-control{resize:vertical;min-height:80px}
           <option value="">— choose a job —</option>
         </select>
       </div>
+      <div id="monitor-summary" class="card" style="display:none;max-width:900px;margin-bottom:16px"></div>
       <div class="row">
         <div style="width:340px;flex-shrink:0">
           <div class="card">
@@ -715,6 +723,38 @@ textarea.form-control{resize:vertical;min-height:80px}
   </div>
 </div>
 
+<!-- CREATOR RIGHTS MANAGER -->
+<div id="rights-overlay" onclick="closeRightsManager(event)">
+  <div id="rights-panel" onclick="event.stopPropagation()">
+    <div class="flex items-center justify-between" style="margin-bottom:16px">
+      <div><div style="font-family:'Chakra Petch',sans-serif;font-size:17px;font-weight:700;color:var(--pink)">Rights & Agreements</div><div id="rights-creator-handle" style="font-size:12px;color:var(--text-dim);margin-top:4px"></div></div>
+      <button class="btn btn-ghost btn-sm" onclick="closeRightsManagerDirect()">✕</button>
+    </div>
+    <div id="rights-agreement-list"><div class="spinner"></div></div>
+    <div style="font-size:11px;color:var(--text-dim);margin:8px 0">Only active, unexpired agreements authorize new uploads. Revoke an agreement to stop future processing under it.</div>
+    <div class="flex gap-3" style="margin:14px 0"><button class="btn btn-primary" onclick="newRightsAgreement()">＋ Add Agreement</button></div>
+    <div class="card" style="padding:16px">
+      <div id="rights-form-title" class="card-title"><span class="dot"></span> New Agreement</div>
+      <input type="hidden" id="rights-edit-id">
+      <div class="row" style="gap:12px">
+        <div class="form-group col"><label class="form-label" for="rights-type">Agreement type</label><select class="form-control" id="rights-type"><option value="non_exclusive">Non-exclusive</option><option value="exclusive">Exclusive</option><option value="revenue_share">Revenue share</option><option value="fair_use_reviewed">Fair use reviewed</option></select></div>
+        <div class="form-group col"><label class="form-label" for="rights-status">Status</label><select class="form-control" id="rights-status"><option value="active">Active</option><option value="pending">Pending</option><option value="expired">Expired</option><option value="revoked">Revoked</option></select></div>
+      </div>
+      <div class="row" style="gap:12px">
+        <div class="form-group col"><label class="form-label" for="rights-authorized-by">Authorized by</label><input class="form-control" id="rights-authorized-by" placeholder="Name of authorizing person" required></div>
+        <div class="form-group col"><label class="form-label" for="rights-valid-to">Valid through</label><input class="form-control" id="rights-valid-to" type="date"><small style="color:var(--text-muted)">Leave blank for no expiry</small></div>
+      </div>
+      <div class="form-group"><label class="form-label" for="rights-rev-share">Revenue share (%)</label><input class="form-control" id="rights-rev-share" type="number" min="0" max="100" step="0.1" value="0"></div>
+      <div class="form-group"><label class="form-label" for="rights-notes">Notes</label><textarea class="form-control" id="rights-notes" placeholder="Optional scope or conditions"></textarea></div>
+      <div class="form-group"><label class="form-label" for="rights-document">Permission document</label><input class="form-control" id="rights-document" type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" required><small id="rights-document-help" style="color:var(--text-muted)">Required for a new agreement. PDF, DOC/DOCX, PNG, or JPG, up to 20 MB.</small></div>
+      <div class="flex gap-3" style="flex-wrap:wrap">
+        <button class="btn btn-primary" id="rights-save-button" onclick="saveRightsAgreement()">💾 Save Agreement</button>
+        <button class="btn btn-ghost" onclick="newRightsAgreement()">Cancel Edit</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST CONTAINER -->
 <div id="toast-container"></div>
 
@@ -727,6 +767,9 @@ var selectedReviewClip = null;
 var selectedClipIds = new Set();
 var _selectedFile = null;
 var _libDebounce = null;
+var queueRefreshTimer = null;
+var rightsCreatorId = null;
+var rightsAgreements = [];
 
 // ===== UTILS =====
 function fmt(n){ return n != null ? Number(n).toLocaleString() : '—'; }
@@ -830,6 +873,9 @@ function switchSection(name){
   if(name==='models') loadModels();
   if(name==='settings') loadAISettings();
   if(name==='analytics') loadAnalytics();
+  if(name==='queue'&&!queueRefreshTimer) queueRefreshTimer=setInterval(function(){
+    if(document.getElementById('section-queue').classList.contains('active')) loadQueue();
+  },3000);
 }
 
 // ===== SSE =====
@@ -961,7 +1007,16 @@ function startUpload(){
 var queueData=[];
 async function loadQueue(){
   try{
-    var jobs=await api('/api/queue');
+    var jobs=responseArray(await api('/api/queue'),'jobs');
+    // Older API builds reported the worker's cached 5% even after the
+    // pipeline checkpointed newer progress to SQLite. Monitor reads SQLite.
+    jobs=await Promise.all(jobs.map(async function(j){
+      if(j.status!=='running'&&j.status!=='paused') return j;
+      try{
+        var state=await api('/api/monitor/'+j.id);
+        return Object.assign({},j,{status:state.status||j.status,stage:state.stage||j.stage,progress:state.progress!=null?state.progress:j.progress,error:state.error_message||j.error});
+      }catch(e){return j;}
+    }));
     queueData=jobs;
     renderQueue(jobs);
     var sel=document.getElementById('monitor-job-select');
@@ -1000,11 +1055,14 @@ function getQueueActions(j){
 }
 async function queueAction(action, jobId){
   try{
-    if(action==='delete') await api('/api/queue/'+jobId,{method:'DELETE'});
-    else await api('/api/queue/'+jobId+'/'+action,{method:'POST'});
-    showToast('Job '+action+' successful','success');
+    var safeId=encodeURIComponent(jobId);
+    var result=action==='delete'
+      ? await api('/api/queue/'+safeId,{method:'DELETE',showError:false})
+      : await api('/api/queue/'+safeId+'/'+action,{method:'POST',showError:false});
+    if(action==='delete'&&result.removed!==true) throw new Error(result.detail||'The job was not removed.');
+    showToast(action==='retry'?'Job queued for retry':action==='delete'?'Job deleted':'Job '+action+' successful','success');
     loadQueue();
-  }catch(e){}
+  }catch(e){ showToast('Could not '+action+' job: '+e.message,'error'); }
 }
 function updateQueueRow(ev){
   if(!ev.job_id) return;
@@ -1018,43 +1076,51 @@ function updateQueueRow(ev){
 
 // ===== MONITOR =====
 var STAGES=[
-  {n:1,name:'Video Ingestion',icon:'📥'},
-  {n:2,name:'Metadata Extraction',icon:'📋'},
-  {n:3,name:'Audio Extraction',icon:'🔊'},
-  {n:4,name:'Transcription',icon:'📝'},
-  {n:5,name:'Audio Analysis',icon:'🎵'},
-  {n:6,name:'Scene Detection',icon:'🎬'},
-  {n:7,name:'Visual Frame Analysis',icon:'👁️'},
-  {n:8,name:'Highlight Discovery',icon:'⭐'},
-  {n:9,name:'AI Scoring',icon:'🤖'},
-  {n:10,name:'Clip Extraction',icon:'✂️'},
-  {n:11,name:'Subtitle Generation',icon:'💬'},
-  {n:12,name:'Rendering',icon:'🖥️'},
-  {n:13,name:'Quality Assurance',icon:'✅'},
-  {n:14,name:'Human Review',icon:'👤'}
+  {n:'intake',name:'Rights & Intake',icon:'📥'},
+  {n:'audio_demux',name:'Audio Extraction',icon:'🔊'},
+  {n:'transcription',name:'Transcription',icon:'📝'},
+  {n:'signals',name:'Audio & Scene Analysis',icon:'🎬'},
+  {n:'fusion',name:'Candidate Discovery',icon:'⭐'},
+  {n:'ai_evaluation',name:'AI Scoring',icon:'🤖'},
+  {n:'composition',name:'Clip Rendering & QA',icon:'✂️'},
+  {n:'finalize',name:'Finalization',icon:'✅'}
 ];
+var monitorLogSet=new Set();
+var monitorTimer=null;
 async function loadMonitorJobs(){
   try{
-    var jobs=await api('/api/queue');
+    var jobs=responseArray(await api('/api/queue'),'jobs');
     var sel=document.getElementById('monitor-job-select');
+    var previous=currentMonitorJob||sel.value;
     sel.innerHTML='<option value="">— choose a job —</option>'+jobs.map(function(j){
       return '<option value="'+j.id+'">['+j.status+'] '+esc(j.title||j.id)+'</option>';
     }).join('');
-  }catch(e){}
+    if(previous&&jobs.some(function(j){return j.id===previous;})){ sel.value=previous; }
+    else if(jobs.length){ sel.value=jobs[0].id; currentMonitorJob=jobs[0].id; }
+    if(sel.value) loadMonitor(sel.value);
+    if(!monitorTimer) monitorTimer=setInterval(function(){
+      if(currentMonitorJob&&document.getElementById('section-monitor').classList.contains('active')) loadMonitor(currentMonitorJob,true);
+    },2500);
+  }catch(e){ showMonitorError(e); }
 }
-async function loadMonitor(jobId){
+async function loadMonitor(jobId,quiet){
   if(!jobId) return;
   currentMonitorJob=jobId;
-  renderStages({});
   try{
     var d=await api('/api/monitor/'+jobId);
-    renderStages(d.stage_states||{});
+    renderStages(Object.keys(d.stage_states||{}).length?d.stage_states:deriveStageStates(d.stage,d.status));
     var terminal=document.getElementById('terminal');
     terminal.innerHTML='';
+    monitorLogSet=new Set();
     var logs=d.stage_logs||[];
-    if(Array.isArray(logs)){ logs.forEach(function(l){ appendLog(typeof l==='string'?l:JSON.stringify(l)); }); }
-    else if(typeof logs==='object'){ Object.values(logs).forEach(function(g){ if(Array.isArray(g)) g.forEach(function(l){ appendLog(String(l)); }); else appendLog(String(g)); }); }
-  }catch(e){}
+    if(Array.isArray(logs)){ logs.forEach(function(l){ appendMonitorLine(typeof l==='string'?l:JSON.stringify(l)); }); }
+    else if(typeof logs==='object'){ Object.values(logs).forEach(function(g){ if(Array.isArray(g)) g.forEach(function(l){ appendMonitorLine(String(l)); }); else appendMonitorLine(String(g)); }); }
+    if(!logs.length&&!d.error_message) appendMonitorLine('Live pipeline log stream will appear here when available. Current stage: '+(d.stage||'—')+' · '+(d.progress||0)+'%.');
+    if(d.error_message) appendMonitorLine('Pipeline error: '+d.error_message);
+    var summary=document.getElementById('monitor-summary');
+    summary.style.display='block';
+    summary.innerHTML='<strong>'+esc(d.title||d.job_id)+'</strong> · <span class="badge badge-'+esc(d.status)+'">'+esc(d.status)+'</span> · '+(d.progress||0)+'% · '+esc(d.stage||'—');
+  }catch(e){ if(!quiet) showMonitorError(e); }
 }
 function renderStages(states){
   var sl=document.getElementById('stage-list');
@@ -1064,9 +1130,30 @@ function renderStages(states){
     return '<div class="pipeline-stage"><div class="stage-num '+st+'">'+icon+'</div><span class="stage-icon">'+s.icon+'</span><span class="stage-name">'+s.name+'</span><span class="badge badge-'+st+'" style="font-size:9px;padding:2px 6px">'+st+'</span></div>';
   }).join('');
 }
+function deriveStageStates(current,status){
+  var idx=STAGES.findIndex(function(s){return s.n===current;});
+  if(idx<0) idx=0;
+  var states={};
+  STAGES.forEach(function(s,i){
+    if(status==='completed'||i<idx) states[s.n]='completed';
+    else if(i===idx) states[s.n]=status==='queued'?'pending':status==='paused'?'paused':status==='failed'?'failed':status==='cancelled'?'cancelled':'running';
+    else states[s.n]='pending';
+  });
+  return states;
+}
 function appendMonitorLog(ev){
   if(ev.job_id && ev.job_id!=currentMonitorJob) return;
-  appendLog(ev.message||ev.line||JSON.stringify(ev));
+  appendMonitorLine(ev.message||ev.line||JSON.stringify(ev));
+}
+function appendMonitorLine(line){
+  line=String(line);
+  if(monitorLogSet.has(line)) return;
+  monitorLogSet.add(line);
+  appendLog(line);
+}
+function showMonitorError(error){
+  var terminal=document.getElementById('terminal');
+  if(terminal) terminal.textContent='Monitor error: '+(error&&error.message?error.message:String(error));
 }
 function appendLog(line){
   var terminal=document.getElementById('terminal');
@@ -1111,8 +1198,12 @@ function renderClipGrid(clips){
   var grid=document.getElementById('clip-grid');
   if(!clips.length){ grid.innerHTML='<div style="grid-column:1/-1" class="empty-state"><div class="empty-state-icon">📭</div><div>No clips found</div></div>'; return; }
   grid.innerHTML=clips.map(function(c){
-    return '<div class="clip-card" onclick="openClipModal('+c.id+')">'
-      +'<div class="clip-thumb">'+(c.thumbnail_path?'<img src="/thumb/'+c.id+'" alt="thumb" onerror="this.style.display=\'none\'">':'')
+    var thumbUrl=c.thumbnail_url||('/thumb/'+c.id);
+    var clipStatus=c.status||(c.approval_status==='pending_review'?'pending':c.approval_status)||'pending';
+    var clipStatusLabel=clipStatus==='pending'?'Pending Review':clipStatus;
+    var clipDuration=c.duration_seconds!=null?c.duration_seconds:c.duration;
+    return '<div class="clip-card" onclick="openClipModal(&quot;'+esc(c.id)+'&quot;)">'
+      +'<div class="clip-thumb"><img src="'+esc(thumbUrl)+'" alt="Clip thumbnail" onload="this.nextElementSibling.style.display=\'none\'" onerror="this.style.display=\'none\'">'
       +'<div class="clip-thumb-placeholder">🎬</div></div>'
       +'<div class="clip-info">'
       +'<div class="clip-title" title="'+esc(c.title||'')+'">'
@@ -1122,7 +1213,7 @@ function renderClipGrid(clips){
       +'<div class="score-pill score-humor">😂 '+(c.humor_score||0).toFixed(1)+'</div>'
       +'<div class="score-pill score-action">⚡ '+(c.action_score||0).toFixed(1)+'</div>'
       +'</div>'
-      +'<div class="clip-meta"><span class="badge badge-'+(c.status||'pending')+'">'+(c.status||'pending')+'</span><span>'+fmtDur(c.duration_seconds)+' · '+esc(c.creator_handle||'')+'</span></div>'
+      +'<div class="clip-meta"><span class="badge badge-'+esc(clipStatus)+'">'+esc(clipStatusLabel)+'</span><span>'+fmtDur(clipDuration)+' · '+esc(c.creator_handle||'')+'</span></div>'
       +'</div></div>';
   }).join('');
 }
@@ -1136,6 +1227,9 @@ async function openClipModal(id){
     var clips=responseArray(await api('/api/library'),'clips');
     var c=clips.find(function(x){ return x.id==id; });
     if(!c){ details.innerHTML='<div>Clip not found</div>'; return; }
+    var clipStatus=c.status||(c.approval_status==='pending_review'?'pending':c.approval_status)||'pending';
+    var clipStatusLabel=clipStatus==='pending'?'Pending Review':clipStatus;
+    var clipDuration=c.duration_seconds!=null?c.duration_seconds:c.duration;
     document.getElementById('modal-title').textContent=c.title||'Clip Detail';
     phone.innerHTML='<video controls src="/video/'+id+'" style="width:100%;height:100%;object-fit:cover" onerror="this.outerHTML=\'<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:32px&quot;>🎬</div>\'"></video>';
     details.innerHTML='<div>'
@@ -1146,25 +1240,35 @@ async function openClipModal(id){
       +'<div class="form-group"><div class="form-label">Timestamps</div><div style="font-size:13px">'+fmtDur(c.optimal_start)+' → '+fmtDur(c.optimal_end)+'</div></div>'
       +(c.export_path?'<div class="form-group"><div class="form-label">Export Path</div><div style="font-size:11px;color:var(--text-muted);word-break:break-all">'+esc(c.export_path)+'</div></div>':'')
       +'<div class="flex gap-3 mt-4">'
-      +(c.status!=='approved'?'<button class="btn btn-green" onclick="modalAction(\'approve\','+id+')">✓ Approve</button>':'')
-      +(c.status!=='rejected'?'<button class="btn btn-red" onclick="modalAction(\'reject\','+id+')">✕ Reject</button>':'')
+      +(clipStatus!=='approved'?'<button class="btn btn-green" data-clip-action="approve" data-clip-id="'+esc(id)+'">✓ Approve</button>':'')
+      +(clipStatus!=='rejected'?'<button class="btn btn-red" data-clip-action="reject" data-clip-id="'+esc(id)+'">✕ Reject</button>':'')
       +'<button class="btn btn-ghost" onclick="closeModalDirect();switchSection(\'review\')">✏️ Edit</button>'
       +'</div>'
-      +'<div class="flex gap-3" style="margin-top:8px"><div class="badge badge-'+(c.status||'pending')+'">'+(c.status||'pending')+'</div>'
-      +'<span style="font-size:12px;color:var(--text-muted)">'+esc(c.creator_handle||'')+' · '+fmtDur(c.duration_seconds)+'</span></div>'
+      +'<div class="flex gap-3" style="margin-top:8px"><div class="badge badge-'+esc(clipStatus)+'">'+esc(clipStatusLabel)+'</div>'
+      +'<span style="font-size:12px;color:var(--text-muted)">'+esc(c.creator_handle||'')+' · '+fmtDur(clipDuration)+'</span></div>'
       +'</div>';
+    details.querySelectorAll('[data-clip-action]').forEach(function(button){
+      button.addEventListener('click',function(){ modalAction(button.dataset.clipAction,button.dataset.clipId); });
+    });
   }catch(e){}
 }
 async function modalAction(action, id){
+  if(!id||['approve','reject'].indexOf(action)<0){ showToast('Could not identify this clip action. Refresh the Library and try again.','error'); return; }
   var body={};
   if(action==='reject'){ var reason=prompt('Reason for rejection:'); if(reason===null) return; body.reason=reason; }
+  var buttons=Array.from(document.querySelectorAll('[data-clip-action]')).filter(function(button){ return button.dataset.clipId===String(id); });
+  buttons.forEach(function(button){button.disabled=true;});
   try{
-    await api('/api/clips/'+id+'/'+action,{method:'POST',body:body});
-    showToast('Clip '+action+'d successfully','success');
+    var result=await api('/api/clips/'+encodeURIComponent(id)+'/'+action,{method:'POST',body:body,showError:false});
+    if(result.status!=='success') throw new Error(result.detail||'The server did not confirm the action.');
+    showToast('Clip '+(action==='approve'?'approved':'rejected')+' successfully','success');
     closeModalDirect();
     if(document.getElementById('section-library').classList.contains('active')) loadLibrary();
     if(document.getElementById('section-review').classList.contains('active')) loadReview();
-  }catch(e){}
+  }catch(e){
+    buttons.forEach(function(button){button.disabled=false;});
+    showToast('Could not '+action+' clip: '+e.message,'error');
+  }
 }
 function closeModal(e){ if(e.target===document.getElementById('modal-overlay')) closeModalDirect(); }
 function closeModalDirect(){ document.getElementById('modal-overlay').classList.remove('open'); }
@@ -1172,22 +1276,28 @@ function closeModalDirect(){ document.getElementById('modal-overlay').classList.
 // ===== REVIEW =====
 async function loadReview(){
   var filter=document.getElementById('review-filter').value;
-  var params=filter?'?status='+filter:'';
   try{
-    var clips=await api('/api/clips'+params);
+    var clips=responseArray(await api('/api/clips'),'clips').map(function(c){
+      var status=c.status||(c.approval_status==='pending_review'?'pending':c.approval_status)||'pending';
+      return Object.assign({},c,{status:status});
+    });
+    if(filter) clips=clips.filter(function(c){ return c.status===filter; });
     reviewClips=clips;
     renderReviewList(clips);
-  }catch(e){}
+  }catch(e){
+    document.getElementById('review-list').innerHTML='<div class="empty-state" style="padding:24px;font-size:12px">Could not load clips: '+esc(e.message||String(e))+'</div>';
+  }
 }
 function renderReviewList(clips){
   var list=document.getElementById('review-list');
   if(!clips.length){ list.innerHTML='<div class="empty-state" style="padding:24px;font-size:12px"><div class="empty-state-icon">📭</div><div>No clips</div></div>'; return; }
   list.innerHTML=clips.map(function(c){
     var sel=selectedReviewClip&&selectedReviewClip.id==c.id;
-    return '<div class="review-item'+(sel?' selected':'')+'" onclick="selectReviewClip('+c.id+')">'
-      +'<input type="checkbox" class="review-checkbox" onclick="event.stopPropagation();toggleClipSelect('+c.id+',this.checked)"'+(selectedClipIds.has(c.id)?' checked':'')+'>'
+    var statusLabel=c.status==='pending'?'Pending Review':c.status;
+    return '<div class="review-item'+(sel?' selected':'')+'" onclick="selectReviewClip(&quot;'+esc(c.id)+'&quot;)">'
+      +'<input type="checkbox" class="review-checkbox" onclick="event.stopPropagation();toggleClipSelect(&quot;'+esc(c.id)+'&quot;,this.checked)"'+(selectedClipIds.has(c.id)?' checked':'')+'>'
       +'<div><div class="review-item-title">'+esc(c.title||'Untitled')+'</div>'
-      +'<div class="review-item-sub"><span class="badge badge-'+(c.status||'pending')+'" style="font-size:9px">'+(c.status||'pending')+'</span>'
+      +'<div class="review-item-sub"><span class="badge badge-'+esc(c.status||'pending')+'" style="font-size:9px">'+esc(statusLabel||'Pending Review')+'</span>'
       +' <span style="margin-left:6px">'+esc(c.creator_handle||'')+'</span></div></div></div>';
   }).join('');
 }
@@ -1224,10 +1334,10 @@ function renderReviewPanel(c){
     +'<option value="square"'+(c.layout_mode==='square'?' selected':'')+'>Square</option>'
     +'</select></div></div>'
     +'<div class="flex gap-3" style="flex-wrap:wrap;margin-top:8px">'
-    +'<button class="btn btn-ghost" id="rv-rerender-btn" onclick="rerenderClip('+c.id+')">🔄 Re-render</button>'
-    +'<button class="btn btn-ghost" onclick="saveClipEdits('+c.id+')">💾 Save</button>'
-    +'<button class="btn btn-green" onclick="reviewAction(\'approve\','+c.id+')">✓ Approve</button>'
-    +'<button class="btn btn-red" onclick="reviewAction(\'reject\','+c.id+')">✕ Reject</button>'
+    +'<button class="btn btn-ghost" id="rv-rerender-btn" onclick="rerenderClip(&quot;'+esc(c.id)+'&quot;)">🔄 Re-render</button>'
+    +'<button class="btn btn-ghost" onclick="saveClipEdits(&quot;'+esc(c.id)+'&quot;)">💾 Save</button>'
+    +'<button class="btn btn-green" onclick="reviewAction(\'approve\',&quot;'+esc(c.id)+'&quot;)">✓ Approve</button>'
+    +'<button class="btn btn-red" onclick="reviewAction(\'reject\',&quot;'+esc(c.id)+'&quot;)">✕ Reject</button>'
     +'</div>'
     +'<div id="rv-spinner" style="display:none;margin-top:12px;text-align:center"><div class="spinner" style="margin:0 auto 6px"></div><div style="font-size:12px;color:var(--text-muted)">Re-rendering…</div></div>'
     +'</div></div>';
@@ -1286,7 +1396,7 @@ async function loadCreators(){
 function renderCreators(creators){
   var tb=document.getElementById('creators-tbody');
   if(!creators.length){ tb.innerHTML='<tr><td colspan="7"><div class="empty-state"><div class="empty-state-icon">👤</div><div>No creators</div></div></td></tr>'; return; }
-  var rightsMap={active:'🟢 Active',none:'🔴 None',pending:'🟡 Pending',expired:'⚠️ Expired'};
+  var rightsMap={active:'🟢 Active',none:'🔴 None',pending:'🟡 Pending',expired:'⚠️ Expired',revoked:'⚫ Revoked'};
   tb.innerHTML=creators.map(function(c){
     var rightsStatus=c.rights_status||(c.has_active_rights?'active':'none');
     var rights=rightsMap[rightsStatus]||('🔵 '+rightsStatus);
@@ -1294,8 +1404,9 @@ function renderCreators(creators){
       +'<td><span class="badge badge-'+(c.status==='active'?'approved':'queued')+'">'+(c.status||'active')+'</span></td>'
       +'<td>'+rights+'</td><td>'+(c.clip_count||0)+'</td>'
       +'<td><div class="flex gap-2">'
-      +'<button class="btn btn-ghost btn-sm" onclick="editCreator('+c.id+')">✏️ Edit</button>'
-      +'<button class="btn btn-red btn-sm" onclick="deleteCreator('+c.id+')">🗑</button>'
+      +'<button class="btn btn-cyan btn-sm" onclick="openRightsManager(&quot;'+esc(c.id)+'&quot;)">⚖️ Rights</button>'
+      +'<button class="btn btn-ghost btn-sm" onclick="editCreator(&quot;'+esc(c.id)+'&quot;)">✏️ Edit</button>'
+      +'<button class="btn btn-red btn-sm" onclick="deleteCreator(&quot;'+esc(c.id)+'&quot;)">🗑</button>'
       +'</div></td></tr>';
   }).join('');
 }
@@ -1321,7 +1432,7 @@ async function editCreator(id){
     document.getElementById('cf-branding').value=c.branding_guidelines||'';
     document.getElementById('cf-auth-platforms').value=c.authorized_platforms||'';
     document.getElementById('creator-form-overlay').classList.add('open');
-  }catch(e){}
+  }catch(e){ showToast('Could not load creator for editing: '+e.message,'error'); }
 }
 async function saveCreator(){
   var id=document.getElementById('creator-edit-id').value;
@@ -1351,8 +1462,114 @@ async function saveCreator(){
 }
 async function deleteCreator(id){
   if(!confirm('Delete this creator? This cannot be undone.')) return;
-  try{ await api('/api/creators/'+id,{method:'DELETE'}); showToast('Creator deleted','success'); loadCreators(); }catch(e){}
+  try{
+    await api('/api/creators/'+encodeURIComponent(id),{method:'DELETE',showError:false});
+    showToast('Creator deleted','success');
+    loadCreators();
+  }catch(e){ showToast('Could not delete creator: '+e.message,'error'); }
 }
+async function openRightsManager(creatorId){
+  rightsCreatorId=String(creatorId);
+  document.getElementById('rights-overlay').classList.add('open');
+  document.getElementById('rights-creator-handle').textContent='Loading creator rights…';
+  document.getElementById('rights-agreement-list').innerHTML='<div class="spinner"></div>';
+  newRightsAgreement();
+  await loadRightsAgreements();
+}
+async function loadRightsAgreements(){
+  if(!rightsCreatorId)return;
+  try{
+    var d=await api('/api/creators/'+encodeURIComponent(rightsCreatorId)+'/rights');
+    rightsAgreements=responseArray(d,'agreements');
+    document.getElementById('rights-creator-handle').textContent=d.creator_handle||rightsCreatorId;
+    renderRightsAgreements();
+  }catch(e){document.getElementById('rights-agreement-list').innerHTML='<div class="rights-agreement">Could not load agreements: '+esc(e.message||String(e))+'</div>';}
+}
+function renderRightsAgreements(){
+  var list=document.getElementById('rights-agreement-list');
+  if(!rightsAgreements.length){list.innerHTML='<div class="rights-agreement" style="color:var(--text-dim)">No permission agreements recorded for this creator.</div>';return;}
+  list.innerHTML=rightsAgreements.map(function(a){
+    var status=a.effective_status||a.status||'pending';
+    var expiry=a.valid_to?new Date(a.valid_to).toLocaleDateString():'No expiry';
+    return '<div class="rights-agreement"><div class="flex items-center justify-between" style="gap:8px">'
+      +'<div><strong>'+esc((a.agreement_type||'').replaceAll('_',' '))+'</strong> <span class="badge badge-'+esc(status)+'">'+esc(status)+'</span></div>'
+      +'<div class="flex gap-2"><button class="btn btn-ghost btn-sm" onclick="editRightsAgreement(&quot;'+esc(a.id)+'&quot;)">Edit</button>'
+      +(status==='active'?'<button class="btn btn-red btn-sm" onclick="revokeRightsAgreement(&quot;'+esc(a.id)+'&quot;)">Revoke</button>':'')+'</div></div>'
+      +'<div style="font-size:11px;color:var(--text-dim);margin-top:7px">Authorized by '+esc(a.authorized_by||'—')+' · Valid through '+esc(expiry)+' · Revenue share '+Number(a.rev_share_percent||0)+'%</div>'
+      +(a.notes?'<div style="font-size:11px;color:var(--text-dim);margin-top:5px">'+esc(a.notes)+'</div>':'')
+      +(a.document_url?'<a href="'+esc(a.document_url)+'" target="_blank" rel="noopener" style="display:inline-block;font-size:11px;margin-top:6px">📄 '+esc(a.documentation_name||'View permission document')+'</a>':'<div style="font-size:11px;color:var(--red);margin-top:6px">Permission document unavailable</div>')
+      +'</div>';
+  }).join('');
+}
+function newRightsAgreement(){
+  document.getElementById('rights-edit-id').value='';
+  document.getElementById('rights-form-title').innerHTML='<span class="dot"></span> New Agreement';
+  document.getElementById('rights-type').value='non_exclusive';
+  document.getElementById('rights-status').value='active';
+  document.getElementById('rights-authorized-by').value='';
+  document.getElementById('rights-valid-to').value='';
+  document.getElementById('rights-rev-share').value='0';
+  document.getElementById('rights-notes').value='';
+  document.getElementById('rights-document').value='';
+  document.getElementById('rights-document').required=true;
+  document.getElementById('rights-document-help').textContent='Required for a new agreement. PDF, DOC/DOCX, PNG, or JPG, up to 20 MB.';
+  document.getElementById('rights-save-button').textContent='💾 Save Agreement';
+}
+function editRightsAgreement(agreementId){
+  var a=rightsAgreements.find(function(item){return item.id===agreementId;});
+  if(!a){showToast('Agreement not found. Reload the Rights panel.','error');return;}
+  document.getElementById('rights-edit-id').value=a.id;
+  document.getElementById('rights-form-title').innerHTML='<span class="dot"></span> Edit Agreement';
+  document.getElementById('rights-type').value=a.agreement_type;
+  document.getElementById('rights-status').value=a.effective_status||a.status;
+  document.getElementById('rights-authorized-by').value=a.authorized_by||'';
+  document.getElementById('rights-valid-to').value=a.valid_to?a.valid_to.slice(0,10):'';
+  document.getElementById('rights-rev-share').value=a.rev_share_percent||0;
+  document.getElementById('rights-notes').value=a.notes||'';
+  document.getElementById('rights-document').value='';
+  document.getElementById('rights-document').required=!a.documentation_available;
+  document.getElementById('rights-document-help').textContent=a.documentation_available?'Current document: '+a.documentation_name+'. Select a file only to replace it.':'No document is available; select a replacement before saving.';
+  document.getElementById('rights-save-button').textContent='💾 Save Changes';
+}
+async function saveRightsAgreement(){
+  if(!rightsCreatorId)return;
+  var authorizedBy=document.getElementById('rights-authorized-by').value.trim();
+  var fileInput=document.getElementById('rights-document');
+  var agreementId=document.getElementById('rights-edit-id').value;
+  if(!authorizedBy){showToast('Authorized by is required.','warn');return;}
+  if(fileInput.required&&!fileInput.files.length){showToast('Attach the permission document.','warn');return;}
+  var form=new FormData();
+  form.append('agreement_type',document.getElementById('rights-type').value);
+  form.append('status',document.getElementById('rights-status').value);
+  form.append('authorized_by',authorizedBy);
+  form.append('valid_to',document.getElementById('rights-valid-to').value);
+  form.append('rev_share_percent',document.getElementById('rights-rev-share').value||'0');
+  form.append('notes',document.getElementById('rights-notes').value);
+  if(fileInput.files.length)form.append('document',fileInput.files[0]);
+  var button=document.getElementById('rights-save-button');
+  button.disabled=true;
+  try{
+    var path=agreementId?'/api/rights/'+encodeURIComponent(agreementId):'/api/creators/'+encodeURIComponent(rightsCreatorId)+'/rights';
+    await api(path,{method:agreementId?'PUT':'POST',body:form,showError:false});
+    showToast(agreementId?'Rights agreement updated':'Rights agreement added','success');
+    newRightsAgreement();
+    await loadRightsAgreements();
+    loadCreators();
+  }catch(e){showToast('Could not save rights agreement: '+e.message,'error');}
+  finally{button.disabled=false;}
+}
+async function revokeRightsAgreement(agreementId){
+  if(!rightsAgreements.some(function(item){return item.id===agreementId;}))return;
+  if(!confirm('Revoke this agreement for '+(document.getElementById('rights-creator-handle').textContent||'this creator')+'? New uploads will be blocked unless another active agreement applies.'))return;
+  try{
+    await api('/api/rights/'+encodeURIComponent(agreementId)+'/revoke',{method:'POST',showError:false});
+    showToast('Rights agreement revoked','success');
+    await loadRightsAgreements();
+    loadCreators();
+  }catch(e){showToast('Could not revoke rights agreement: '+e.message,'error');}
+}
+function closeRightsManager(event){if(event.target===document.getElementById('rights-overlay'))closeRightsManagerDirect();}
+function closeRightsManagerDirect(){document.getElementById('rights-overlay').classList.remove('open');rightsCreatorId=null;}
 function closeCreatorForm(e){ if(e.target===document.getElementById('creator-form-overlay')) closeCreatorFormDirect(); }
 function closeCreatorFormDirect(){ document.getElementById('creator-form-overlay').classList.remove('open'); }
 

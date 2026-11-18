@@ -12,6 +12,8 @@ The application keeps source media, its SQLite database, model settings, and exp
 - Local vision and reasoning through Ollama, with optional OpenAI-compatible hosted models.
 - Vertical reframing, subtitles, loudness normalization, thumbnails, and FFmpeg rendering.
 - A browser dashboard for upload, queue monitoring, creator management, clip review, and approval.
+- Per-creator rights management with archived permission documents and agreement history.
+- Live queue progress and pipeline stage logs, plus a Library for previewing generated clips.
 - Windows DPAPI encryption for API keys saved through Settings.
 
 ## Requirements
@@ -59,6 +61,16 @@ python scripts/register_creator.py `
 
 The permission document is copied into the ignored local `data/agreements/` folder. Confirm you have the necessary rights and permissions before registering a creator or processing footage.
 
+### Manage creator rights
+
+Open **Creators** and select **Rights** on the creator row to view their permission agreements. From the Rights panel you can add an agreement, edit its type, status, authorizer, expiry date, revenue share, and notes, replace its permission document, or revoke it. Archived documents can be opened from the agreement history.
+
+Permission files must be PDF, DOC, DOCX, PNG, or JPG/JPEG and are limited to 20 MB. New agreements require a document and an authorizer. Files are stored under `data/agreements/`, which is local and gitignored. Editing an agreement keeps its existing document unless you select a replacement; revoking changes the agreement status without deleting its record or document.
+
+Only an **active, unexpired** agreement authorizes new uploads. Set an expiry date to the final day the permission is valid, or leave it blank for an agreement without an expiry date. If multiple agreements exist, uploads remain authorized while at least one is active and unexpired. Creator **Content Restrictions** and **Authorized Platforms** are metadata; agreement status and validity control the upload rights gate.
+
+The `scripts/register_creator.py` command remains available for first-time creator registration. When used with an existing handle, it creates an additional agreement; use the dashboard Rights panel to edit or revoke existing agreements.
+
 ## Run the application
 
 Place a supported video file in `data/raw_footage/`, or upload it from the dashboard. The data folders are created automatically and are excluded from Git.
@@ -76,6 +88,16 @@ python scripts/start_dashboard.py
 ```
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The dashboard can also upload videos, manage creators, queue jobs, review clips, and approve or reject results.
+
+### Queue, monitor, and review workflow
+
+- **Queue** shows saved job status, current pipeline stage, progress, candidate count, and produced clips. Start queued jobs, pause/resume or cancel active jobs, retry failed or cancelled jobs, and remove eligible jobs.
+- **Retry** starts failed/cancelled jobs again from intake and clears their previous intermediate candidates. Jobs that already produced clips cannot be retried, to avoid duplicating or overwriting reviewable results.
+- **Delete** removes an eligible queued, failed, or cancelled job. Jobs with generated clips are protected; review or export those clips before removing associated records.
+- **Monitor** follows the pipeline stages and shows per-job log output. It refreshes while open.
+- **Library** previews exported clips and their thumbnails. **Review** lists clips for approval or rejection and lets you select a clip to inspect its video and details.
+
+The dashboard server runs without automatic Python code reload. After pulling code updates, stop it with `Ctrl+C` in its terminal and start it again with `python scripts/start_dashboard.py` so API changes take effect. Refresh the browser after the server is ready.
 
 ### Optional hosted models
 
