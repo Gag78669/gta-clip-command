@@ -5,9 +5,11 @@ import hashlib
 import hmac
 import os
 import secrets
-import smtplib
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
+import json
+import urllib.error
+import urllib.request
 
 from sqlalchemy import update
 from src.core.config import get_settings
@@ -37,8 +39,8 @@ def verify_password(password: str, encoded: str) -> bool:
 
 def send_verification_email(email: str, token: str) -> None:
     cfg = get_settings()
-    if not cfg.smtp_host or not cfg.smtp_from:
-        raise RuntimeError("Email verification is not configured. Set SMTP_HOST and SMTP_FROM.")
+    if not cfg.smtp_from:
+        raise RuntimeError("Email verification is not configured. Set SMTP_FROM.")
     origin = cfg.frontend_origin.rstrip("/")
     link = f"{origin}/?verify={token}"
     msg = EmailMessage()
@@ -46,6 +48,28 @@ def send_verification_email(email: str, token: str) -> None:
     msg["From"] = cfg.smtp_from
     msg["To"] = email
     msg.set_content(f"Verify your email address by opening this link within 24 hours:\n\n{link}\n")
+    if cfg.resend_api_key:
+        payload = json.dumps({
+            "from": cfg.smtp_from,
+            "to": [email],
+            "subject": msg["Subject"],
+            "text": msg.get_content(),
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            "https://api.resend.com/emails", data=payload,
+            headers={"Authorization": f"Bearer {cfg.resend_api_key}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                if response.status >= 300:
+                    raise RuntimeError("Verification email provider rejected the request.")
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise RuntimeError("Could not send verification email through the configured provider.") from exc
+        return
+    if not cfg.smtp_host:
+        raise RuntimeError("Email verification is not configured. Set RESEND_API_KEY or SMTP_HOST.")
+    import smtplib
     with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=15) as server:
         server.starttls()
         if cfg.smtp_user:

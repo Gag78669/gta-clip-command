@@ -77,6 +77,7 @@ class PipelineWorker:
         # Start the dispatcher thread
         self._thread = threading.Thread(target=self._dispatcher_loop, daemon=True, name="worker-dispatcher")
         self._thread.start()
+        self._recover_queued_jobs()
         logger.info("PipelineWorker started.")
 
     # ------------------------------------------------------------------
@@ -95,6 +96,21 @@ class PipelineWorker:
                     logger.warning("Marked stale job %s as failed.", j.id)
         except Exception as exc:
             logger.error("Failed to reset stale jobs: %s", exc)
+
+    def _recover_queued_jobs(self) -> None:
+        """Rebuild the in-memory queue from durable database rows after a restart."""
+        try:
+            with get_db_context() as db:
+                jobs = (db.query(ProcessingJob)
+                        .filter(ProcessingJob.status == "queued")
+                        .order_by(ProcessingJob.created_at.asc()).all())
+                pending = [(job.id, job.media_id, job.media.creator.handle if job.media and job.media.creator else "",
+                            job.media.file_path if job.media else "", job.owner_id) for job in jobs]
+            for job_id, media_id, creator_handle, video_path, owner_id in pending:
+                if creator_handle and video_path:
+                    self.enqueue(job_id, media_id, creator_handle, video_path, owner_id)
+        except Exception as exc:
+            logger.exception("Could not restore queued jobs after startup: %s", exc)
 
     # ------------------------------------------------------------------
     # SSE helpers

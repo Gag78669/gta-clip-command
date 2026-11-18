@@ -58,14 +58,12 @@ def initialize_application():
         missing = []
         if not settings.database_url.startswith(("postgresql://", "postgresql+psycopg://", "postgres://")):
             missing.append("DATABASE_URL (PostgreSQL)")
-        if not settings.redis_url:
-            missing.append("REDIS_URL")
         if not settings.storage_bucket or not settings.storage_access_key or not settings.storage_secret_key:
             missing.append("S3-compatible object storage credentials")
         if not settings.cloud_key_encryption_key:
             missing.append("CLOUD_KEY_ENCRYPTION_KEY")
-        if not settings.smtp_host or not settings.smtp_from:
-            missing.append("SMTP_HOST and SMTP_FROM")
+        if not (settings.resend_api_key or settings.smtp_host) or not settings.smtp_from:
+            missing.append("RESEND_API_KEY (or SMTP_HOST) and SMTP_FROM")
         if missing:
             raise RuntimeError("Hosted deployment is missing required settings: " + ", ".join(missing))
     init_db()
@@ -147,7 +145,7 @@ def register_account(req: RegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=422, detail="Password must contain at least 12 characters.")
     if len(req.password) > 128:
         raise HTTPException(status_code=422, detail="Password must be 128 characters or fewer.")
-    if settings.auth_enabled and (not settings.smtp_host or not settings.smtp_from):
+    if settings.auth_enabled and not (settings.smtp_from and (settings.resend_api_key or settings.smtp_host)):
         raise HTTPException(status_code=503, detail="Email verification is not configured on this server.")
     if db.query(UserAccount).filter(func.lower(UserAccount.email) == email).first():
         raise HTTPException(status_code=409, detail="An account with that email already exists.")
@@ -195,7 +193,7 @@ def login_account(req: LoginRequest, response: Response, db: Session = Depends(g
         raise HTTPException(status_code=403, detail="Verify your email before signing in.")
     session_token = new_session(db, user.id)
     response.set_cookie("gta_session", session_token, httponly=True, secure=settings.auth_enabled,
-                        samesite="lax", max_age=30 * 24 * 3600, path="/")
+                        samesite="none" if settings.auth_enabled else "lax", max_age=30 * 24 * 3600, path="/")
     return {"status": "signed_in", "email": user.email}
 
 
@@ -208,7 +206,8 @@ def logout_account(request: Request, response: Response, db: Session = Depends(g
         if row:
             db.delete(row)
             db.commit()
-    response.delete_cookie("gta_session", path="/")
+    response.delete_cookie("gta_session", path="/", secure=settings.auth_enabled,
+                           samesite="none" if settings.auth_enabled else "lax")
     return {"status": "signed_out"}
 
 

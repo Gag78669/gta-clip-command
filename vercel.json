@@ -1,5 +1,23 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "python scripts/build_frontend.py",
-  "outputDirectory": "frontend_dist"
+  "outputDirectory": "frontend_dist",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://gta-clip-command-api-gag78669.onrender.com/api/:path*"
+    },
+    {
+      "source": "/video/:path*",
+      "destination": "https://gta-clip-command-api-gag78669.onrender.com/video/:path*"
+    },
+    {
+      "source": "/thumb/:path*",
+      "destination": "https://gta-clip-command-api-gag78669.onrender.com/thumb/:path*"
+    },
+    {
+      "source": "/healthz",
+      "destination": "https://gta-clip-command-api-gag78669.onrender.com/healthz"
+    }
+  ]
 }

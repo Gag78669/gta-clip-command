@@ -21,7 +21,8 @@ def main():
     logger.info("Running database initialization and migrations...")
     init_db()
 
-    # Hosted deployments use the separate Redis-backed worker service.
+    # With Redis disabled (the free single-service deployment), process jobs
+    # in this service and recover queued database records after restarts.
     if not settings.redis_url:
         logger.info("Initializing local pipeline worker...")
         get_worker()

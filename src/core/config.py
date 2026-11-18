@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = ""
+    resend_api_key: str = ""
 
     # FFmpeg Toolchain
     ffmpeg_bin: str = "ffmpeg"

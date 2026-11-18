@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: gta-clip-command-api-gag78669
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: AUTH_ENABLED
+        value: "true"
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: DATABASE_URL
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: CLOUD_KEY_ENCRYPTION_KEY
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: STORAGE_BUCKET
+        sync: false
+      - key: STORAGE_ENDPOINT_URL
+        sync: false
+      - key: STORAGE_ACCESS_KEY
+        sync: false
+      - key: STORAGE_SECRET_KEY
+        sync: false
+      - key: STORAGE_REGION
+        value: auto
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DAILY_FREE_SECONDS
+        value: "1200"
+      - key: MAX_VIDEO_SECONDS
+        value: "600"
