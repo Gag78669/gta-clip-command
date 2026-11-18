@@ -27,7 +27,7 @@ The application keeps source media, its SQLite database, model settings, and exp
 Open PowerShell in the cloned repository directory:
 
 ```powershell
-git clone https://github.com/<owner>/gta-clip-command.git
+git clone https://github.com/Gag78669/gta-clip-command
 Set-Location gta-clip-command
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
