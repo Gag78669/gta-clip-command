@@ -41,7 +41,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-
   background:var(--card);border-bottom:1px solid var(--border);
   flex-shrink:0;z-index:100;gap:12px;
 }
-#menu-toggle{background:none;border:none;color:var(--text);cursor:pointer;padding:6px;display:none;font-size:20px}
+#menu-toggle{background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;padding:4px 8px;display:flex;align-items:center;justify-content:center;width:34px;height:34px;font-size:17px;flex-shrink:0}#menu-toggle:hover{border-color:var(--cyan);color:var(--cyan)}
 #header-logo{font-family:'Chakra Petch',sans-serif;font-size:18px;font-weight:700;color:var(--pink);letter-spacing:2px;text-transform:uppercase}
 #header-logo span{color:var(--cyan)}
 #header-right{margin-left:auto;display:flex;align-items:center;gap:16px}
@@ -57,8 +57,9 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-
 #sidebar{
   width:var(--sidebar-w);flex-shrink:0;background:var(--card);
   border-right:1px solid var(--border);overflow-y:auto;
-  display:flex;flex-direction:column;transition:transform .25s ease;
+  display:flex;flex-direction:column;transition:width .25s ease,transform .25s ease;
 }
+#layout.sidebar-collapsed #sidebar{width:0;border-right-width:0;overflow:hidden}
 #sidebar-label{
   padding:16px 16px 8px;font-family:'Chakra Petch',sans-serif;
   font-size:10px;letter-spacing:2px;color:var(--text-muted);text-transform:uppercase
@@ -293,7 +294,7 @@ textarea.form-control{resize:vertical;min-height:80px}
   :root{--sidebar-w:220px}
   #sidebar{position:fixed;top:var(--header-h);bottom:0;left:0;z-index:200;transform:translateX(-100%)}
   #sidebar.open{transform:none}
-  #menu-toggle{display:block}
+  #layout.sidebar-collapsed #sidebar{width:var(--sidebar-w);border-right:1px solid var(--border)}
   .kpi-grid{grid-template-columns:repeat(2,1fr)}
   .clip-grid{grid-template-columns:1fr}
   #main{width:100%}
@@ -324,7 +325,7 @@ textarea.form-control{resize:vertical;min-height:80px}
 
 <!-- HEADER -->
 <div id="header">
-  <button id="menu-toggle" onclick="toggleSidebar()">☰</button>
+  <button id="menu-toggle" type="button" onclick="toggleSidebar()" aria-label="Hide side menu" aria-expanded="true" title="Hide side menu">◀</button>
   <div id="header-logo">GTA<span>CLIP</span> COMMAND</div>
   <div id="header-right">
     <div id="sse-status">
@@ -859,7 +860,26 @@ function tickClock(){ document.getElementById('header-time').textContent=new Dat
 setInterval(tickClock,1000); tickClock();
 
 // ===== SIDEBAR =====
-function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('open'); }
+function syncSidebarToggle(){
+  var layout=document.getElementById('layout');
+  var sidebar=document.getElementById('sidebar');
+  var button=document.getElementById('menu-toggle');
+  var mobile=window.matchMedia('(max-width: 640px)').matches;
+  var expanded=mobile?sidebar.classList.contains('open'):!layout.classList.contains('sidebar-collapsed');
+  button.setAttribute('aria-expanded',String(expanded));
+  button.setAttribute('aria-label',expanded?'Hide side menu':'Show side menu');
+  button.title=expanded?'Hide side menu':'Show side menu';
+  button.textContent=mobile?(expanded?'×':'☰'):(expanded?'◀':'☰');
+}
+function toggleSidebar(){
+  var layout=document.getElementById('layout');
+  var sidebar=document.getElementById('sidebar');
+  if(window.matchMedia('(max-width: 640px)').matches) sidebar.classList.toggle('open');
+  else layout.classList.toggle('sidebar-collapsed');
+  syncSidebarToggle();
+}
+syncSidebarToggle();
+window.addEventListener('resize',syncSidebarToggle);
 
 // ===== SECTION SWITCHING =====
 function switchSection(name){
