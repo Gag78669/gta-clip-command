@@ -314,8 +314,12 @@ async def upload_video(
     file: UploadFile = File(...),
     creator_id: str = Form(...),
     title: str = Form(...),
+    candidate_count: int = Form(3),
     db: Session = Depends(get_db),
 ):
+    if candidate_count < 1 or candidate_count > 10:
+        raise HTTPException(status_code=422, detail="Candidate count must be between 1 and 10")
+
     creator = db.query(Creator).filter(Creator.id == creator_id).first()
     if not creator:
         raise HTTPException(status_code=404, detail="Creator not found")
@@ -372,6 +376,7 @@ async def upload_video(
         status="queued",
         current_stage="intake",
         progress_percent=0,
+        requested_clip_count=candidate_count,
     )
     db.add(job)
     db.commit()
@@ -410,6 +415,7 @@ def get_queue(db: Session = Depends(get_db)):
             "current_model": j.current_model,
             "candidate_count": getattr(j, "candidate_count", 0) or 0,
             "clip_count": getattr(j, "clip_count", 0) or 0,
+            "requested_clip_count": getattr(j, "requested_clip_count", 3) or 3,
             "error": j.error_message,
             "created_at": j.created_at.isoformat() if j.created_at else None,
         })

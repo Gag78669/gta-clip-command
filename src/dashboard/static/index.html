@@ -429,6 +429,13 @@ textarea.form-control{resize:vertical;min-height:80px}
             <input type="text" class="form-control" id="upload-title" placeholder="Enter a descriptive title…">
           </div>
         </div>
+        <div class="col">
+          <div class="form-group">
+            <label class="form-label">Candidate clips to generate</label>
+            <input type="number" class="form-control" id="upload-candidate-count" min="1" max="10" step="1" value="3">
+            <div style="font-size:11px;color:var(--text-dim);margin-top:5px">Choose 1–10. The pipeline may produce fewer if it finds fewer suitable moments.</div>
+          </div>
+        </div>
       </div>
       <div id="upload-progress-wrap">
         <div class="form-label">Upload Progress</div>
@@ -972,10 +979,13 @@ function startUpload(){
   var title=document.getElementById('upload-title').value.trim();
   if(!creator){ showToast('Please select a creator.','warn'); return; }
   if(!title){ showToast('Please enter a title.','warn'); return; }
+  var candidateCount=Number(document.getElementById('upload-candidate-count').value);
+  if(!Number.isInteger(candidateCount)||candidateCount<1||candidateCount>10){ showToast('Choose between 1 and 10 candidate clips.','warn'); return; }
   var fd=new FormData();
   fd.append('file',_selectedFile);
   fd.append('creator_id',creator);
   fd.append('title',title);
+  fd.append('candidate_count',String(candidateCount));
   var wrap=document.getElementById('upload-progress-wrap');
   var bar=document.getElementById('upload-progress-bar');
   var pct=document.getElementById('upload-progress-pct');

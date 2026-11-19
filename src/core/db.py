@@ -64,6 +64,7 @@ def migrate_db() -> None:
         "ALTER TABLE processing_jobs ADD COLUMN completed_at DATETIME",
         "ALTER TABLE processing_jobs ADD COLUMN candidate_count INTEGER DEFAULT 0",
         "ALTER TABLE processing_jobs ADD COLUMN clip_count INTEGER DEFAULT 0",
+        "ALTER TABLE processing_jobs ADD COLUMN requested_clip_count INTEGER NOT NULL DEFAULT 3",
         "ALTER TABLE processing_jobs ADD COLUMN stage_logs TEXT",
         "ALTER TABLE processing_jobs ADD COLUMN stage_states TEXT",
         # final_clips

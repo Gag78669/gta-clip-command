@@ -260,9 +260,14 @@ class PipelineWorker:
 
             # Wrap run_pipeline with pause/cancel checkpoints
             # We rely on run_pipeline being synchronous and returning final_clips list
+            with get_db_context() as db:
+                job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
+                max_clips = int(job.requested_clip_count or 3) if job else 3
+
             final_clips = run_pipeline(
                 video_path=video_path,
                 creator_handle=creator_handle,
+                max_clips=max_clips,
                 job_id=job_id,
                 checkpoint=lambda: self._pipeline_checkpoint(job_id),
             )

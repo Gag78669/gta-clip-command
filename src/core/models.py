@@ -112,6 +112,7 @@ class ProcessingJob(Base):
     completed_at = Column(DateTime, nullable=True)
     candidate_count = Column(Integer, nullable=False, default=0)
     clip_count = Column(Integer, nullable=False, default=0)
+    requested_clip_count = Column(Integer, nullable=False, default=3)
     error_message = Column(Text, nullable=True)
     stage_metadata = Column(Text, nullable=True)  # JSON-encoded checkpoints for crash resumption
     stage_logs = Column(Text, nullable=True)      # JSON list of structured logs

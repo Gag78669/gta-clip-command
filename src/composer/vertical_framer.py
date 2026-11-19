@@ -26,18 +26,18 @@ class VerticalFramer:
             cam_h = int(self.h * 0.35)  # 672
             game_h = self.h - cam_h    # 1248
 
-            # Default facecam crop coordinates (assuming standard 1920x1080 source)
+            # Facecam crop coordinates are proportional, so they work at any input resolution.
             if webcam_position == "top_left":
-                cam_crop = f"crop=480:360:0:0,scale={self.w}:{cam_h}"
+                cam_crop = f"crop=iw/4:ih/3:0:0,scale={self.w}:{cam_h}"
             elif webcam_position == "bottom_right":
-                cam_crop = f"crop=480:360:1440:720,scale={self.w}:{cam_h}"
+                cam_crop = f"crop=iw/4:ih/3:iw*3/4:ih*2/3,scale={self.w}:{cam_h}"
             elif webcam_position == "bottom_left":
-                cam_crop = f"crop=480:360:0:720,scale={self.w}:{cam_h}"
+                cam_crop = f"crop=iw/4:ih/3:0:ih*2/3,scale={self.w}:{cam_h}"
             else:  # top_right (most common)
-                cam_crop = f"crop=480:360:1440:0,scale={self.w}:{cam_h}"
+                cam_crop = f"crop=iw/4:ih/3:iw*3/4:0,scale={self.w}:{cam_h}"
 
-            # Gameplay crop: Center 9:16 crop from the 16:9 gameplay frame
-            game_crop = f"crop=935:1080:(in_w-935)/2:0,scale={self.w}:{game_h}"
+            # Gameplay crop: Center crop using the same proportions as the 1920x1080 layout.
+            game_crop = f"crop=iw*935/1920:ih:(iw-ow)/2:0,scale={self.w}:{game_h}"
 
             filters.append(f"[0:v]split=2[in_cam][in_game]")
             filters.append(f"[in_cam]{cam_crop}[cam_out]")
