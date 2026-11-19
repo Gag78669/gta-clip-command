@@ -42,27 +42,6 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default_factory=lambda: f"sqlite:///{Path(__file__).resolve().parent.parent.parent / 'data' / 'gta_clip.db'}"
     )
-    auth_enabled: bool = False
-    app_secret_key: str = ""
-    api_base_url: str = ""
-    groq_api_key: str = ""
-    cloud_key_encryption_key: str = ""
-    daily_free_seconds: int = 1200
-    max_video_seconds: int = 600
-    max_upload_bytes: int = 5368709120
-    redis_url: str = ""
-    storage_bucket: str = ""
-    storage_endpoint_url: str = ""
-    storage_access_key: str = ""
-    storage_secret_key: str = ""
-    storage_region: str = "auto"
-    frontend_origin: str = "http://127.0.0.1:8000"
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_from: str = ""
-    resend_api_key: str = ""
 
     # FFmpeg Toolchain
     ffmpeg_bin: str = "ffmpeg"

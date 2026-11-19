@@ -21,20 +21,17 @@ def main():
     logger.info("Running database initialization and migrations...")
     init_db()
 
-    # With Redis disabled (the free single-service deployment), process jobs
-    # in this service and recover queued database records after restarts.
-    if not settings.redis_url:
-        logger.info("Initializing local pipeline worker...")
-        get_worker()
+    # Initialize background worker (resets stale jobs, starts dispatcher thread)
+    logger.info("Initializing pipeline worker...")
+    get_worker()
 
     logger.info(
         "Launching Human Approval Dashboard at: http://127.0.0.1:8000"
     )
-    import os
     uvicorn.run(
         "src.dashboard.api:app",
-        host=os.getenv("API_HOST", settings.api_host),
-        port=int(os.getenv("PORT", settings.api_port)),
+        host="127.0.0.1",
+        port=8000,
         reload=False,
         log_level="info",
     )
