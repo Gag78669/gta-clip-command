@@ -638,13 +638,14 @@ textarea.form-control{resize:vertical;min-height:80px}
           <label style="font-size:12px;display:flex;align-items:center;gap:7px;margin-top:8px"><input id="setting-clear-key" type="checkbox"> Remove saved API key</label>
         </div>
         <div class="row" style="gap:16px;flex-wrap:wrap">
-          <div class="form-group col"><label class="form-label" for="setting-reasoning-model">Cloud reasoning model ID</label><input class="form-control" id="setting-reasoning-model" placeholder="e.g. gpt-4o-mini"></div>
-          <div class="form-group col"><label class="form-label" for="setting-vision-model">Cloud vision model ID</label><input class="form-control" id="setting-vision-model" placeholder="e.g. gpt-4o-mini"></div>
+          <div class="form-group col"><label class="form-label" for="setting-reasoning-model">Cloud reasoning model ID</label><select class="form-control" id="setting-reasoning-model" aria-describedby="cloud-model-fetch-help"><option value="">Test the connection to fetch models</option></select></div>
+          <div class="form-group col"><label class="form-label" for="setting-vision-model">Cloud vision model ID</label><select class="form-control" id="setting-vision-model" aria-describedby="cloud-model-fetch-help"><option value="">Test the connection to fetch models</option></select></div>
         </div>
+        <div id="cloud-model-fetch-help" style="font-size:11px;color:var(--text-muted);margin-top:-8px">Test the connection to load model IDs available from this API.</div>
         <div class="flex gap-3" style="flex-wrap:wrap;margin-top:8px">
           <button class="btn btn-primary" onclick="saveAISettings()">💾 Save Settings</button>
-          <button class="btn btn-ghost" onclick="testAISettings()">🔌 Test Cloud Connection</button>
-          <span id="setting-test-status" style="font-size:12px;color:var(--text-dim);align-self:center"></span>
+          <button class="btn btn-ghost" onclick="testAISettings()">🔌 Test Connection &amp; Fetch Models</button>
+          <span id="setting-test-status" role="status" aria-live="polite" style="font-size:12px;color:var(--text-dim);align-self:center"></span>
         </div>
       </div>
       <div class="card" style="max-width:900px">
@@ -1643,14 +1644,38 @@ async function loadModels(){
     document.getElementById('vision-model-select').innerHTML=opts(curV);
   }catch(e){}
 }
+var cachedCloudModelIds=[];
+function populateCloudModelSelect(selectId, modelIds, selectedValue){
+  var select=document.getElementById(selectId);
+  var currentValue=selectedValue||select.value||'';
+  var ids=Array.from(new Set((Array.isArray(modelIds)?modelIds:[]).filter(function(id){ return typeof id==='string'&&id.trim(); }).map(function(id){ return id.trim(); })));
+  select.replaceChildren();
+  var placeholder=document.createElement('option');
+  placeholder.value='';
+  placeholder.textContent=ids.length?'Select a model':'Test the connection to fetch models';
+  select.appendChild(placeholder);
+  if(currentValue&&ids.indexOf(currentValue)===-1){
+    var savedOption=document.createElement('option');
+    savedOption.value=currentValue;
+    savedOption.textContent='Saved: '+currentValue+' (not in current API list)';
+    select.appendChild(savedOption);
+  }
+  ids.forEach(function(id){
+    var option=document.createElement('option');
+    option.value=id;
+    option.textContent=id;
+    select.appendChild(option);
+  });
+  select.value=currentValue;
+}
 async function loadAISettings(){
   try{
     var d=await api('/api/settings/ai');
     document.getElementById('setting-reasoning-provider').value=d.reasoning_provider||'ollama';
     document.getElementById('setting-vision-provider').value=d.vision_provider||'ollama';
     document.getElementById('setting-cloud-url').value=d.cloud_base_url||'https://api.openai.com/v1';
-    document.getElementById('setting-reasoning-model').value=d.cloud_reasoning_model||'';
-    document.getElementById('setting-vision-model').value=d.cloud_vision_model||'';
+    populateCloudModelSelect('setting-reasoning-model',cachedCloudModelIds,d.cloud_reasoning_model||'');
+    populateCloudModelSelect('setting-vision-model',cachedCloudModelIds,d.cloud_vision_model||'');
     document.getElementById('setting-api-key').value='';
     document.getElementById('setting-api-key').placeholder=d.api_key_configured?'Saved securely — leave blank to keep it':'Paste API key';
     document.getElementById('setting-key-status').textContent=d.api_key_configured?'A key is saved securely. Leave blank to keep it.':'No API key saved.';
@@ -1677,8 +1702,12 @@ async function testAISettings(){
   var body={cloud_base_url:document.getElementById('setting-cloud-url').value.trim(),cloud_api_key:document.getElementById('setting-api-key').value};
   try{
     var d=await api('/api/settings/ai/test',{method:'POST',body:body});
-    status.textContent='Connected — '+d.model_count+' model(s) available.';
-    status.style.color='var(--green)';
+    var modelIds=(Array.isArray(d.models)?d.models:[]).map(function(model){ return model&&typeof model.id==='string'?model.id.trim():''; }).filter(Boolean);
+    cachedCloudModelIds=modelIds;
+    populateCloudModelSelect('setting-reasoning-model',modelIds,document.getElementById('setting-reasoning-model').value);
+    populateCloudModelSelect('setting-vision-model',modelIds,document.getElementById('setting-vision-model').value);
+    status.textContent=modelIds.length?'Connected — '+modelIds.length+' model(s) loaded. Choose model IDs above.':'Connected, but the API returned no model IDs.';
+    status.style.color=modelIds.length?'var(--green)':'var(--yellow)';
   }catch(e){ status.textContent='Could not connect. Check endpoint and key.'; status.style.color='var(--red)'; }
 }
 async function saveModelSelection(){

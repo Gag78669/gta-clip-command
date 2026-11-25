@@ -127,3 +127,17 @@ def test_save_ai_settings_encrypts_api_key_on_sqlite(test_client, monkeypatch, t
     assert settings.status_code == 200
     assert settings.json()["api_key_configured"] is True
     assert api_key not in settings.text
+
+
+def test_cloud_connection_returns_available_model_ids(test_client, monkeypatch):
+    available_models = [{"id": "reasoning-model"}, {"id": "vision-model"}]
+    monkeypatch.setattr("src.reasoning.openai_compatible.list_models", lambda base_url, api_key: available_models)
+
+    response = test_client.post(
+        "/api/settings/ai/test",
+        json={"cloud_base_url": "https://api.example.com/v1", "cloud_api_key": "test-key"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["model_count"] == 2
+    assert response.json()["models"] == available_models
