@@ -634,7 +634,7 @@ textarea.form-control{resize:vertical;min-height:80px}
         <div class="form-group">
           <label class="form-label" for="setting-api-key">API key</label>
           <input class="form-control" id="setting-api-key" type="password" autocomplete="new-password" placeholder="">
-          <div id="setting-key-status" style="font-size:11px;color:var(--text-muted);margin-top:5px">API key is stored encrypted on this Windows account and never shown after saving.</div>
+          <div id="setting-key-status" style="font-size:11px;color:var(--text-muted);margin-top:5px">API key is encrypted at rest and never shown after saving.</div>
           <label style="font-size:12px;display:flex;align-items:center;gap:7px;margin-top:8px"><input id="setting-clear-key" type="checkbox"> Remove saved API key</label>
         </div>
         <div class="row" style="gap:16px;flex-wrap:wrap">
@@ -1653,7 +1653,7 @@ async function loadAISettings(){
     document.getElementById('setting-vision-model').value=d.cloud_vision_model||'';
     document.getElementById('setting-api-key').value='';
     document.getElementById('setting-api-key').placeholder=d.api_key_configured?'Saved securely — leave blank to keep it':'Paste API key';
-    document.getElementById('setting-key-status').textContent=d.api_key_configured?'A key is saved encrypted on this Windows account. Leave blank to keep it.':'No API key saved.';
+    document.getElementById('setting-key-status').textContent=d.api_key_configured?'A key is saved securely. Leave blank to keep it.':'No API key saved.';
     document.getElementById('setting-clear-key').checked=false;
   }catch(e){}
 }

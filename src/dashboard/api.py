@@ -1209,6 +1209,8 @@ def select_models(req: ModelSelectRequest, db: Session = Depends(get_db)):
 def get_ai_settings(db: Session = Depends(get_db)):
     from src.core.models import SystemSetting
     values = {row.key: row.value for row in db.query(SystemSetting).filter(SystemSetting.key.like("ai_%")).all()}
+    from src.core.secrets import has_usable_secret
+
     encrypted_key = values.get("ai_cloud_api_key", "")
     return {
         "reasoning_provider": values.get("ai_reasoning_provider", "ollama"),
@@ -1216,7 +1218,7 @@ def get_ai_settings(db: Session = Depends(get_db)):
         "cloud_base_url": values.get("ai_cloud_base_url", "https://api.openai.com/v1"),
         "cloud_reasoning_model": values.get("ai_cloud_reasoning_model", ""),
         "cloud_vision_model": values.get("ai_cloud_vision_model", ""),
-        "api_key_configured": encrypted_key.startswith("dpapi:"),
+        "api_key_configured": has_usable_secret(encrypted_key),
     }
 
 
@@ -1245,8 +1247,11 @@ def update_ai_settings(req: AISettingsRequest, db: Session = Depends(get_db)):
         from src.core.secrets import encrypt_secret
         try:
             updates["ai_cloud_api_key"] = encrypt_secret(req.cloud_api_key)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from None
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            logger.warning("Could not encrypt cloud API key (%s).", type(exc).__name__)
+            raise HTTPException(status_code=500, detail="Unable to securely encrypt the API key.") from None
     for key, value in updates.items():
         row = db.query(SystemSetting).filter(SystemSetting.key == key).first()
         if row:
@@ -1255,7 +1260,7 @@ def update_ai_settings(req: AISettingsRequest, db: Session = Depends(get_db)):
         else:
             db.add(SystemSetting(key=key, value=value, updated_at=_now()))
     db.commit()
-    return {"status": "updated", "api_key_configured": updates.get("ai_cloud_api_key", "configured").startswith("dpapi:") or (not req.clear_api_key and not req.cloud_api_key and get_ai_settings(db)["api_key_configured"])}
+    return {"status": "updated", "api_key_configured": get_ai_settings(db)["api_key_configured"]}
 
 
 @app.post("/api/settings/ai/test")

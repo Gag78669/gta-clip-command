@@ -27,7 +27,7 @@ def get_ai_config() -> dict[str, str]:
         config["reasoning_model"] = config["cloud_reasoning_model"]
     if config["vision_provider"] == "openai_compatible" and config["cloud_vision_model"]:
         config["vision_model"] = config["cloud_vision_model"]
-    if config.get("cloud_api_key", "").startswith("dpapi:"):
+    if config.get("cloud_api_key"):
         from src.core.secrets import decrypt_secret
         try:
             config["cloud_api_key"] = decrypt_secret(config["cloud_api_key"])
