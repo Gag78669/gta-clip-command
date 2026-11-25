@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
 <title>GTA CLIP COMMAND — Control Center</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -41,7 +45,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-
   background:var(--card);border-bottom:1px solid var(--border);
   flex-shrink:0;z-index:100;gap:12px;
 }
-#menu-toggle{background:none;border:none;color:var(--text);cursor:pointer;padding:6px;display:none;font-size:20px}
+#menu-toggle{background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;padding:4px 8px;display:flex;align-items:center;justify-content:center;width:34px;height:34px;font-size:17px;flex-shrink:0}#menu-toggle:hover{border-color:var(--cyan);color:var(--cyan)}
 #header-logo{font-family:'Chakra Petch',sans-serif;font-size:18px;font-weight:700;color:var(--pink);letter-spacing:2px;text-transform:uppercase}
 #header-logo span{color:var(--cyan)}
 #header-right{margin-left:auto;display:flex;align-items:center;gap:16px}
@@ -57,8 +61,9 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-
 #sidebar{
   width:var(--sidebar-w);flex-shrink:0;background:var(--card);
   border-right:1px solid var(--border);overflow-y:auto;
-  display:flex;flex-direction:column;transition:transform .25s ease;
+  display:flex;flex-direction:column;transition:width .25s ease,transform .25s ease;
 }
+#layout.sidebar-collapsed #sidebar{width:0;border-right-width:0;overflow:hidden}
 #sidebar-label{
   padding:16px 16px 8px;font-family:'Chakra Petch',sans-serif;
   font-size:10px;letter-spacing:2px;color:var(--text-muted);text-transform:uppercase
@@ -293,7 +298,7 @@ textarea.form-control{resize:vertical;min-height:80px}
   :root{--sidebar-w:220px}
   #sidebar{position:fixed;top:var(--header-h);bottom:0;left:0;z-index:200;transform:translateX(-100%)}
   #sidebar.open{transform:none}
-  #menu-toggle{display:block}
+  #layout.sidebar-collapsed #sidebar{width:var(--sidebar-w);border-right:1px solid var(--border)}
   .kpi-grid{grid-template-columns:repeat(2,1fr)}
   .clip-grid{grid-template-columns:1fr}
   #main{width:100%}
@@ -324,11 +329,9 @@ textarea.form-control{resize:vertical;min-height:80px}
 
 <!-- HEADER -->
 <div id="header">
-  <button id="menu-toggle" onclick="toggleSidebar()">☰</button>
+  <button id="menu-toggle" type="button" onclick="toggleSidebar()" aria-label="Hide side menu" aria-expanded="true" title="Hide side menu">◀</button>
   <div id="header-logo">GTA<span>CLIP</span> COMMAND</div>
   <div id="header-right">
-    <span id="account-label" style="display:none;font-size:11px;color:var(--text-dim)"></span>
-    <button id="account-logout" class="btn btn-ghost btn-sm" style="display:none" onclick="logoutAccount()">Sign out</button>
     <div id="sse-status">
       <div id="sse-dot"></div>
       <span id="sse-label">Disconnected</span>
@@ -429,6 +432,13 @@ textarea.form-control{resize:vertical;min-height:80px}
           <div class="form-group">
             <label class="form-label">Video Title</label>
             <input type="text" class="form-control" id="upload-title" placeholder="Enter a descriptive title…">
+          </div>
+        </div>
+        <div class="col">
+          <div class="form-group">
+            <label class="form-label">Candidate clips to generate</label>
+            <input type="number" class="form-control" id="upload-candidate-count" min="1" max="10" step="1" value="3">
+            <div style="font-size:11px;color:var(--text-dim);margin-top:5px">Choose 1–10. The pipeline may produce fewer if it finds fewer suitable moments.</div>
           </div>
         </div>
       </div>
@@ -628,17 +638,18 @@ textarea.form-control{resize:vertical;min-height:80px}
         <div class="form-group">
           <label class="form-label" for="setting-api-key">API key</label>
           <input class="form-control" id="setting-api-key" type="password" autocomplete="new-password" placeholder="">
-          <div id="setting-key-status" style="font-size:11px;color:var(--text-muted);margin-top:5px">API key is stored encrypted on this Windows account and never shown after saving.</div>
+          <div id="setting-key-status" style="font-size:11px;color:var(--text-muted);margin-top:5px">API key is encrypted at rest and never shown after saving.</div>
           <label style="font-size:12px;display:flex;align-items:center;gap:7px;margin-top:8px"><input id="setting-clear-key" type="checkbox"> Remove saved API key</label>
         </div>
         <div class="row" style="gap:16px;flex-wrap:wrap">
-          <div class="form-group col"><label class="form-label" for="setting-reasoning-model">Cloud reasoning model ID</label><input class="form-control" id="setting-reasoning-model" placeholder="e.g. gpt-4o-mini"></div>
-          <div class="form-group col"><label class="form-label" for="setting-vision-model">Cloud vision model ID</label><input class="form-control" id="setting-vision-model" placeholder="e.g. gpt-4o-mini"></div>
+          <div class="form-group col"><label class="form-label" for="setting-reasoning-model">Cloud reasoning model ID</label><select class="form-control" id="setting-reasoning-model" aria-describedby="cloud-model-fetch-help"><option value="">Test the connection to fetch models</option></select></div>
+          <div class="form-group col"><label class="form-label" for="setting-vision-model">Cloud vision model ID</label><select class="form-control" id="setting-vision-model" aria-describedby="cloud-model-fetch-help"><option value="">Test the connection to fetch models</option></select></div>
         </div>
+        <div id="cloud-model-fetch-help" style="font-size:11px;color:var(--text-muted);margin-top:-8px">Test the connection to load model IDs available from this API.</div>
         <div class="flex gap-3" style="flex-wrap:wrap;margin-top:8px">
           <button class="btn btn-primary" onclick="saveAISettings()">💾 Save Settings</button>
-          <button class="btn btn-ghost" onclick="testAISettings()">🔌 Test Cloud Connection</button>
-          <span id="setting-test-status" style="font-size:12px;color:var(--text-dim);align-self:center"></span>
+          <button class="btn btn-ghost" onclick="testAISettings()">🔌 Test Connection &amp; Fetch Models</button>
+          <span id="setting-test-status" role="status" aria-live="polite" style="font-size:12px;color:var(--text-dim);align-self:center"></span>
         </div>
       </div>
       <div class="card" style="max-width:900px">
@@ -760,44 +771,7 @@ textarea.form-control{resize:vertical;min-height:80px}
 <!-- TOAST CONTAINER -->
 <div id="toast-container"></div>
 
-<script src="/config.js"></script>
-<div id="local-backend-gate" style="display:none;position:fixed;inset:0;z-index:6000;background:rgba(5,6,12,.97);align-items:center;justify-content:center;padding:20px">
-  <div style="width:min(520px,100%);background:#12141f;border:1px solid #292e48;border-radius:12px;padding:28px;box-shadow:0 20px 80px #0009">
-    <div style="font-weight:700;color:#ff2a85;font-size:20px;margin-bottom:8px">Connect to your local clipper</div>
-    <div style="color:#8790b6;margin-bottom:18px">The free web page runs on Vercel. Video files, Ollama, and processing stay on this computer. Start GTA Clip Command from its terminal, then connect here.</div>
-    <label class="form-label" for="local-api-url">Local API address</label>
-    <input class="form-control" id="local-api-url" type="url" value="http://127.0.0.1:8000" style="width:100%;margin:8px 0 14px">
-    <button class="btn btn-primary" id="local-api-connect" onclick="connectLocalBackend()" style="width:100%">Connect to local app</button>
-    <div id="local-api-message" style="margin-top:14px;color:#8790b6;min-height:22px"></div>
-    <div style="color:#6b7294;font-size:12px;margin-top:8px">Your browser may ask for permission to let this site connect to localhost. Allow it to continue. This connection is private to your computer.</div>
-  </div>
-</div>
-<div id="account-gate" style="display:none;position:fixed;inset:0;z-index:5000;background:rgba(5,6,12,.96);align-items:center;justify-content:center;padding:20px">
-  <div style="width:min(440px,100%);background:#12141f;border:1px solid #292e48;border-radius:12px;padding:28px;box-shadow:0 20px 80px #0009">
-    <div style="font-weight:700;color:#ff2a85;font-size:18px;margin-bottom:6px">GTA CLIP COMMAND</div>
-    <div style="color:#8790b6;margin-bottom:18px">Sign in or create an account to continue.</div>
-    <div style="display:flex;gap:8px;margin-bottom:14px"><button class="btn btn-primary" id="account-mode-login" onclick="setAccountMode('login')">Sign in</button><button class="btn btn-ghost" id="account-mode-register" onclick="setAccountMode('register')">Create account</button></div>
-    <label class="form-label">Email</label><input class="form-control" id="account-email" type="email" autocomplete="email" style="width:100%;margin-bottom:12px">
-    <label class="form-label">Password</label><input class="form-control" id="account-password" type="password" autocomplete="current-password" style="width:100%;margin-bottom:12px">
-    <button class="btn btn-primary" id="account-submit" onclick="submitAccount()" style="width:100%">Sign in</button>
-    <div id="account-message" style="margin-top:14px;color:#8790b6;min-height:22px"></div>
-  </div>
-</div>
 <script>
-function apiUrl(path){var base=(window.GTA_API_BASE||'').replace(/\/$/,'');return base+(path.charAt(0)==='/'?path:'/'+path);}
-function isLoopbackBase(base){try{var host=new URL(base).hostname.toLowerCase();return host==='localhost'||host==='127.0.0.1'||host==='[::1]';}catch(e){return false;}}
-function connectLocalBackend(){
-  var input=document.getElementById('local-api-url'),message=document.getElementById('local-api-message'),button=document.getElementById('local-api-connect');
-  var base=(input.value||'').trim().replace(/\/+$/,'');
-  try{var parsed=new URL(base);if(!['http:','https:'].includes(parsed.protocol)||parsed.pathname!=='/'||parsed.search||parsed.hash||!isLoopbackBase(base)){throw new Error('Use a local address such as http://127.0.0.1:8000.');}base=parsed.origin;}catch(e){message.textContent=e.message||'Enter a valid local API address.';message.style.color='var(--red)';return;}
-  button.disabled=true;message.textContent='Connecting…';message.style.color='var(--text-dim)';
-  fetch(base+'/healthz',{method:'GET',mode:'cors',credentials:'include',cache:'no-store',targetAddressSpace:'loopback'})
-    .then(function(r){if(!r.ok)throw new Error('Local API returned HTTP '+r.status+'.');return r.json();})
-    .then(function(d){if(d.status!=='ok')throw new Error('Local API did not return a healthy status.');window.GTA_API_BASE=base;localStorage.setItem('gta-local-api-base',base);document.getElementById('local-backend-gate').style.display='none';startDashboard();})
-    .catch(function(e){message.textContent='Could not connect. Start the app with “python scripts/start_dashboard.py”, then check FRONTEND_ORIGIN in your local .env matches this Vercel site. '+(e.message||'');message.style.color='var(--red)';button.disabled=false;});
-}
-function setAccountMode(mode){window._accountMode=mode;document.getElementById('account-submit').textContent=mode==='register'?'Create account':'Sign in';document.getElementById('account-password').autocomplete=mode==='register'?'new-password':'current-password';document.getElementById('account-message').textContent=mode==='register'?'Use a password with at least 12 characters. A verification link will be emailed to you.':'';}
-async function submitAccount(){var mode=window._accountMode||'login',email=document.getElementById('account-email').value.trim(),password=document.getElementById('account-password').value,message=document.getElementById('account-message');message.textContent='Please wait…';try{var result=await api('/api/auth/'+(mode==='register'?'register':'login'),{method:'POST',body:{email:email,password:password},showError:false});if(mode==='register'){message.textContent='Verification email sent. Verify your address, then sign in.';return;}document.getElementById('account-gate').style.display='none';window.location.reload();}catch(e){message.textContent=e.message||'Could not complete account request.';}}
 // ===== GLOBALS =====
 var sseSource = null;
 var currentMonitorJob = null;
@@ -872,14 +846,11 @@ async function api(path, opts){
     } else if(opts.body){
       fetchOpts.body=opts.body;
     }
-    fetchOpts.credentials='include';
-    if(isLoopbackBase(window.GTA_API_BASE||'')) fetchOpts.targetAddressSpace='loopback';
-    var r=await fetch(apiUrl(path),fetchOpts);
+    var r=await fetch(path,fetchOpts);
     if(!r.ok){
       var txt=await r.text().catch(function(){ return r.statusText; });
       var message=txt||'HTTP '+r.status;
       try{ var payload=JSON.parse(txt); if(payload.detail) message=payload.detail; }catch(e){}
-      if(r.status===401){showAccountGate();}
       throw new Error(message);
     }
     return await r.json();
@@ -888,21 +859,32 @@ async function api(path, opts){
     throw e;
   }
 }
-function showAccountGate(){var gate=document.getElementById('account-gate');if(gate)gate.style.display='flex';}
-async function logoutAccount(){try{await api('/api/auth/logout',{method:'POST',showError:false});window.location.reload();}catch(e){showToast('Could not sign out: '+e.message,'error');}}
-async function refreshAccountUsage(){try{var me=await api('/api/auth/me',{showError:false});if(me.authenticated){var label=document.getElementById('account-label');label.textContent=me.email+' · '+Math.floor((me.usage.remaining_seconds||0)/60)+' free min left today';}}catch(e){}}
-async function checkAccountAccess(){
-  var params=new URLSearchParams(window.location.search),verify=params.get('verify');
-  if(verify){var msg=document.getElementById('account-message');try{await api('/api/auth/verify?token='+encodeURIComponent(verify),{showError:false});msg.textContent='Email verified. You can now sign in.';setAccountMode('login');document.getElementById('account-gate').style.display='flex';history.replaceState({},'',window.location.pathname);}catch(e){msg.textContent=e.message;document.getElementById('account-gate').style.display='flex';return false;}return false;}
-  try{var me=await api('/api/auth/me',{showError:false});if(me.auth_required&&!me.authenticated){showAccountGate();return false;}if(me.authenticated){var label=document.getElementById('account-label');label.textContent=me.email+' · '+Math.floor((me.usage.remaining_seconds||0)/60)+' free min left today';label.style.display='inline';document.getElementById('account-logout').style.display='inline-flex';}return true;}catch(e){showAccountGate();return false;}
-}
 
 // ===== CLOCK =====
 function tickClock(){ document.getElementById('header-time').textContent=new Date().toLocaleTimeString('en-US',{hour12:false}); }
 setInterval(tickClock,1000); tickClock();
 
 // ===== SIDEBAR =====
-function toggleSidebar(){ document.getElementById('sidebar').classList.toggle('open'); }
+function syncSidebarToggle(){
+  var layout=document.getElementById('layout');
+  var sidebar=document.getElementById('sidebar');
+  var button=document.getElementById('menu-toggle');
+  var mobile=window.matchMedia('(max-width: 640px)').matches;
+  var expanded=mobile?sidebar.classList.contains('open'):!layout.classList.contains('sidebar-collapsed');
+  button.setAttribute('aria-expanded',String(expanded));
+  button.setAttribute('aria-label',expanded?'Hide side menu':'Show side menu');
+  button.title=expanded?'Hide side menu':'Show side menu';
+  button.textContent=mobile?(expanded?'×':'☰'):(expanded?'◀':'☰');
+}
+function toggleSidebar(){
+  var layout=document.getElementById('layout');
+  var sidebar=document.getElementById('sidebar');
+  if(window.matchMedia('(max-width: 640px)').matches) sidebar.classList.toggle('open');
+  else layout.classList.toggle('sidebar-collapsed');
+  syncSidebarToggle();
+}
+syncSidebarToggle();
+window.addEventListener('resize',syncSidebarToggle);
 
 // ===== SECTION SWITCHING =====
 function switchSection(name){
@@ -934,7 +916,7 @@ function initSSE(){
   var dot=document.getElementById('sse-dot');
   var lbl=document.getElementById('sse-label');
   try{
-    sseSource=new EventSource(apiUrl('/api/events'),{withCredentials:true});
+    sseSource=new EventSource('/api/events');
     sseSource.onopen=function(){ dot.classList.add('connected'); lbl.textContent='Live'; };
     sseSource.onerror=function(){ dot.classList.remove('connected'); lbl.textContent='Reconnecting…'; setTimeout(initSSE,5000); };
     sseSource.onmessage=function(e){ try{ handleSSE(JSON.parse(e.data)); }catch(err){} };
@@ -1022,10 +1004,13 @@ function startUpload(){
   var title=document.getElementById('upload-title').value.trim();
   if(!creator){ showToast('Please select a creator.','warn'); return; }
   if(!title){ showToast('Please enter a title.','warn'); return; }
+  var candidateCount=Number(document.getElementById('upload-candidate-count').value);
+  if(!Number.isInteger(candidateCount)||candidateCount<1||candidateCount>10){ showToast('Choose between 1 and 10 candidate clips.','warn'); return; }
   var fd=new FormData();
   fd.append('file',_selectedFile);
   fd.append('creator_id',creator);
   fd.append('title',title);
+  fd.append('candidate_count',String(candidateCount));
   var wrap=document.getElementById('upload-progress-wrap');
   var bar=document.getElementById('upload-progress-bar');
   var pct=document.getElementById('upload-progress-pct');
@@ -1041,7 +1026,6 @@ function startUpload(){
       re.style.display='block';
       re.innerHTML='✅ Upload successful! Job ID: <strong>'+(res.job_id||'N/A')+'</strong> &nbsp;<button class="btn btn-ghost btn-sm" onclick="switchSection(\'queue\')">View Queue →</button>';
       showToast('Upload complete!','success');
-      refreshAccountUsage();
       _selectedFile=null;
       document.getElementById('file-input').value='';
     }else{
@@ -1050,14 +1034,7 @@ function startUpload(){
     }
   };
   xhr.onerror=function(){ btn.disabled=false; showToast('Upload failed: Network error','error'); };
-  if(window.GTA_HOSTED){
-    fetch(apiUrl('/api/upload/presign'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:_selectedFile.name,content_type:_selectedFile.type||'application/octet-stream',size_bytes:_selectedFile.size})})
-      .then(function(r){return r.json().then(function(x){if(!r.ok)throw new Error(x.detail||'Could not start direct upload');return x;});})
-      .then(function(info){var put=new XMLHttpRequest();put.open('PUT',info.upload_url);put.setRequestHeader('Content-Type',info.content_type);put.upload.onprogress=function(e){if(e.lengthComputable){var p=Math.round(e.loaded/e.total*95);bar.style.width=p+'%';pct.textContent=p+'%';}};put.onload=function(){if(put.status<200||put.status>=300){btn.disabled=false;showToast('Object storage rejected the upload. Check bucket CORS configuration.','error');return;}bar.style.width='98%';fetch(apiUrl('/api/upload/complete'),{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({storage_key:info.storage_key,creator_id:creator,title:title,filename:_selectedFile.name})}).then(function(r){return r.json().then(function(x){if(!r.ok)throw new Error(x.detail||'Could not create processing job');return x;});}).then(function(res){bar.style.width='100%';pct.textContent='100%';document.getElementById('upload-result').style.display='block';document.getElementById('upload-result').innerHTML='✅ Upload successful! Job ID: <strong>'+esc(res.job_id)+'</strong> &nbsp;<button class="btn btn-ghost btn-sm" onclick="switchSection(\'queue\')">View Queue →</button>';_selectedFile=null;document.getElementById('file-input').value='';btn.disabled=false;showToast('Upload complete!','success');refreshAccountUsage();}).catch(function(e){btn.disabled=false;showToast('Upload failed: '+e.message,'error');});};put.onerror=function(){btn.disabled=false;showToast('Upload failed: storage network error','error');};put.send(_selectedFile);})
-      .catch(function(e){btn.disabled=false;showToast('Upload failed: '+e.message,'error');});
-    return;
-  }
-  xhr.open('POST',apiUrl('/api/upload'));xhr.withCredentials=true;
+  xhr.open('POST','/api/upload');
   xhr.send(fd);
 }
 
@@ -1119,7 +1096,6 @@ async function queueAction(action, jobId){
       : await api('/api/queue/'+safeId+'/'+action,{method:'POST',showError:false});
     if(action==='delete'&&result.removed!==true) throw new Error(result.detail||'The job was not removed.');
     showToast(action==='retry'?'Job queued for retry':action==='delete'?'Job deleted':'Job '+action+' successful','success');
-    refreshAccountUsage();
     loadQueue();
   }catch(e){ showToast('Could not '+action+' job: '+e.message,'error'); }
 }
@@ -1257,7 +1233,7 @@ function renderClipGrid(clips){
   var grid=document.getElementById('clip-grid');
   if(!clips.length){ grid.innerHTML='<div style="grid-column:1/-1" class="empty-state"><div class="empty-state-icon">📭</div><div>No clips found</div></div>'; return; }
   grid.innerHTML=clips.map(function(c){
-    var thumbUrl=apiUrl(c.thumbnail_url||('/thumb/'+c.id));
+    var thumbUrl=c.thumbnail_url||('/thumb/'+c.id);
     var clipStatus=c.status||(c.approval_status==='pending_review'?'pending':c.approval_status)||'pending';
     var clipStatusLabel=clipStatus==='pending'?'Pending Review':clipStatus;
     var clipDuration=c.duration_seconds!=null?c.duration_seconds:c.duration;
@@ -1290,7 +1266,7 @@ async function openClipModal(id){
     var clipStatusLabel=clipStatus==='pending'?'Pending Review':clipStatus;
     var clipDuration=c.duration_seconds!=null?c.duration_seconds:c.duration;
     document.getElementById('modal-title').textContent=c.title||'Clip Detail';
-    phone.innerHTML='<video controls src="'+esc(apiUrl('/video/'+id))+'" style="width:100%;height:100%;object-fit:cover" onerror="this.outerHTML=\'<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:32px&quot;>🎬</div>\'"></video>';
+    phone.innerHTML='<video controls src="/video/'+id+'" style="width:100%;height:100%;object-fit:cover" onerror="this.outerHTML=\'<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:32px&quot;>🎬</div>\'"></video>';
     details.innerHTML='<div>'
       +'<div class="form-group"><div class="form-label">Title</div><div style="font-size:15px;font-weight:600">'+esc(c.title||'—')+'</div></div>'
       +(c.hook_text?'<div class="form-group"><div class="form-label">Hook</div><div>'+esc(c.hook_text)+'</div></div>':'')
@@ -1378,7 +1354,7 @@ function renderReviewPanel(c){
   var panel=document.getElementById('review-panel');
   panel.innerHTML='<div class="row" style="gap:24px;flex-wrap:wrap">'
     +'<div><div class="phone-mockup">'
-    +'<video controls src="'+esc(apiUrl('/video/'+c.id))+'" style="width:100%;height:100%;object-fit:cover"></video>'
+    +'<video controls src="/video/'+c.id+'" style="width:100%;height:100%;object-fit:cover"></video>'
     +'</div></div>'
     +'<div style="flex:1;min-width:200px">'
     +'<div class="form-group"><label class="form-label">Title</label><input type="text" class="form-control" id="rv-title" value="'+esc(c.title||'')+'"></div>'
@@ -1556,7 +1532,7 @@ function renderRightsAgreements(){
       +(status==='active'?'<button class="btn btn-red btn-sm" onclick="revokeRightsAgreement(&quot;'+esc(a.id)+'&quot;)">Revoke</button>':'')+'</div></div>'
       +'<div style="font-size:11px;color:var(--text-dim);margin-top:7px">Authorized by '+esc(a.authorized_by||'—')+' · Valid through '+esc(expiry)+' · Revenue share '+Number(a.rev_share_percent||0)+'%</div>'
       +(a.notes?'<div style="font-size:11px;color:var(--text-dim);margin-top:5px">'+esc(a.notes)+'</div>':'')
-      +(a.document_url?'<a href="'+esc(apiUrl(a.document_url))+'" target="_blank" rel="noopener" style="display:inline-block;font-size:11px;margin-top:6px">📄 '+esc(a.documentation_name||'View permission document')+'</a>':'<div style="font-size:11px;color:var(--red);margin-top:6px">Permission document unavailable</div>')
+      +(a.document_url?'<a href="'+esc(a.document_url)+'" target="_blank" rel="noopener" style="display:inline-block;font-size:11px;margin-top:6px">📄 '+esc(a.documentation_name||'View permission document')+'</a>':'<div style="font-size:11px;color:var(--red);margin-top:6px">Permission document unavailable</div>')
       +'</div>';
   }).join('');
 }
@@ -1608,14 +1584,8 @@ async function saveRightsAgreement(){
   var button=document.getElementById('rights-save-button');
   button.disabled=true;
   try{
-    if(window.GTA_HOSTED){
-      var docKey=null;
-      if(fileInput.files.length){var file=fileInput.files[0];var signed=await api('/api/rights/presign',{method:'POST',body:{filename:file.name,content_type:file.type||'application/octet-stream',size_bytes:file.size},showError:false});await new Promise(function(resolve,reject){var xhr=new XMLHttpRequest();xhr.open('PUT',signed.upload_url);xhr.setRequestHeader('Content-Type',signed.content_type);xhr.onload=function(){if(xhr.status>=200&&xhr.status<300)resolve();else reject(new Error('Object storage rejected the permission document.'));};xhr.onerror=function(){reject(new Error('Permission document upload failed.'));};xhr.send(file);});docKey=signed.storage_key;}
-      await api('/api/rights/complete',{method:'POST',body:{creator_id:rightsCreatorId,agreement_id:agreementId||null,agreement_type:document.getElementById('rights-type').value,status:document.getElementById('rights-status').value,authorized_by:authorizedBy,valid_to:document.getElementById('rights-valid-to').value||null,rev_share_percent:parseFloat(document.getElementById('rights-rev-share').value||'0'),notes:document.getElementById('rights-notes').value||null,document_key:docKey},showError:false});
-    }else{
-      var path=agreementId?'/api/rights/'+encodeURIComponent(agreementId):'/api/creators/'+encodeURIComponent(rightsCreatorId)+'/rights';
-      await api(path,{method:agreementId?'PUT':'POST',body:form,showError:false});
-    }
+    var path=agreementId?'/api/rights/'+encodeURIComponent(agreementId):'/api/creators/'+encodeURIComponent(rightsCreatorId)+'/rights';
+    await api(path,{method:agreementId?'PUT':'POST',body:form,showError:false});
     showToast(agreementId?'Rights agreement updated':'Rights agreement added','success');
     newRightsAgreement();
     await loadRightsAgreements();
@@ -1678,17 +1648,41 @@ async function loadModels(){
     document.getElementById('vision-model-select').innerHTML=opts(curV);
   }catch(e){}
 }
+var cachedCloudModelIds=[];
+function populateCloudModelSelect(selectId, modelIds, selectedValue){
+  var select=document.getElementById(selectId);
+  var currentValue=selectedValue||select.value||'';
+  var ids=Array.from(new Set((Array.isArray(modelIds)?modelIds:[]).filter(function(id){ return typeof id==='string'&&id.trim(); }).map(function(id){ return id.trim(); })));
+  select.replaceChildren();
+  var placeholder=document.createElement('option');
+  placeholder.value='';
+  placeholder.textContent=ids.length?'Select a model':'Test the connection to fetch models';
+  select.appendChild(placeholder);
+  if(currentValue&&ids.indexOf(currentValue)===-1){
+    var savedOption=document.createElement('option');
+    savedOption.value=currentValue;
+    savedOption.textContent='Saved: '+currentValue+' (not in current API list)';
+    select.appendChild(savedOption);
+  }
+  ids.forEach(function(id){
+    var option=document.createElement('option');
+    option.value=id;
+    option.textContent=id;
+    select.appendChild(option);
+  });
+  select.value=currentValue;
+}
 async function loadAISettings(){
   try{
     var d=await api('/api/settings/ai');
     document.getElementById('setting-reasoning-provider').value=d.reasoning_provider||'ollama';
     document.getElementById('setting-vision-provider').value=d.vision_provider||'ollama';
     document.getElementById('setting-cloud-url').value=d.cloud_base_url||'https://api.openai.com/v1';
-    document.getElementById('setting-reasoning-model').value=d.cloud_reasoning_model||'';
-    document.getElementById('setting-vision-model').value=d.cloud_vision_model||'';
+    populateCloudModelSelect('setting-reasoning-model',cachedCloudModelIds,d.cloud_reasoning_model||'');
+    populateCloudModelSelect('setting-vision-model',cachedCloudModelIds,d.cloud_vision_model||'');
     document.getElementById('setting-api-key').value='';
-    document.getElementById('setting-api-key').placeholder=d.user_api_key_configured?'Saved securely — leave blank to keep it':'Paste API key';
-    document.getElementById('setting-key-status').textContent=d.user_api_key_configured?'Your API key is encrypted and saved. Leave blank to keep it.':(d.platform_key_available?'The app-managed provider key is available. You may enter a personal key to use your own provider account.':'No API key saved.');
+    document.getElementById('setting-api-key').placeholder=d.api_key_configured?'Saved securely — leave blank to keep it':'Paste API key';
+    document.getElementById('setting-key-status').textContent=d.api_key_configured?'A key is saved securely. Leave blank to keep it.':'No API key saved.';
     document.getElementById('setting-clear-key').checked=false;
   }catch(e){}
 }
@@ -1709,12 +1703,16 @@ async function saveAISettings(){
 async function testAISettings(){
   var status=document.getElementById('setting-test-status');
   status.textContent='Checking endpoint…';
-  var body={cloud_base_url:document.getElementById('setting-cloud-url').value.trim(),cloud_api_key:document.getElementById('setting-api-key').value,cloud_reasoning_model:document.getElementById('setting-reasoning-model').value.trim(),cloud_vision_model:document.getElementById('setting-vision-model').value.trim()};
+  var body={cloud_base_url:document.getElementById('setting-cloud-url').value.trim(),cloud_api_key:document.getElementById('setting-api-key').value};
   try{
     var d=await api('/api/settings/ai/test',{method:'POST',body:body});
-    var checked=Object.keys(d.inference_checks||{});status.textContent='Connected — '+d.model_count+' model(s); inference verified: '+(checked.length?checked.join(', '):'no models selected');
-    status.style.color='var(--green)';
-  }catch(e){ status.textContent=e.message||'Connection test failed.'; status.style.color='var(--red)'; }
+    var modelIds=(Array.isArray(d.models)?d.models:[]).map(function(model){ return model&&typeof model.id==='string'?model.id.trim():''; }).filter(Boolean);
+    cachedCloudModelIds=modelIds;
+    populateCloudModelSelect('setting-reasoning-model',modelIds,document.getElementById('setting-reasoning-model').value);
+    populateCloudModelSelect('setting-vision-model',modelIds,document.getElementById('setting-vision-model').value);
+    status.textContent=modelIds.length?'Connected — '+modelIds.length+' model(s) loaded. Choose model IDs above.':'Connected, but the API returned no model IDs.';
+    status.style.color=modelIds.length?'var(--green)':'var(--yellow)';
+  }catch(e){ status.textContent='Could not connect. Check endpoint and key.'; status.style.color='var(--red)'; }
 }
 async function saveModelSelection(){
   var body={reasoning_model:document.getElementById('reasoning-model-select').value,vision_model:document.getElementById('vision-model-select').value};
@@ -1747,10 +1745,10 @@ async function loadAnalytics(){
 }
 
 // ===== INIT =====
-function startDashboard(){checkAccountAccess().then(function(allowed){if(!allowed)return;fetchOverview();initSSE();setInterval(fetchOverview,10000);if(window.GTA_HOSTED)setInterval(refreshAccountUsage,30000);});}
 window.addEventListener('DOMContentLoaded',function(){
-  if(window.GTA_CONNECT_LOCAL){var saved=localStorage.getItem('gta-local-api-base');if(saved&&isLoopbackBase(saved))document.getElementById('local-api-url').value=saved;document.getElementById('local-backend-gate').style.display='flex';return;}
-  startDashboard();
+  fetchOverview();
+  initSSE();
+  setInterval(fetchOverview,10000);
 });
 </script>
 </body>

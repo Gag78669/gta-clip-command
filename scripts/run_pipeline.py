@@ -170,7 +170,7 @@ def run_pipeline(
             scenes=scenes,
             hotspots=hotspots,
             transcript=transcript,
-            max_candidates=max_clips + 2,
+            max_candidates=max_clips,
         )
         safe_checkpoint()
 
@@ -350,7 +350,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run GTA CLIP COMMAND End-to-End Pipeline.")
     parser.add_argument("video_path", help="Path to creator gameplay video or VOD")
     parser.add_argument("--creator", required=True, help="Registered creator handle")
-    parser.add_argument("--max-clips", type=int, default=3, help="Maximum clips to generate")
+    parser.add_argument("--max-clips", type=int, default=3, help="Maximum highlight candidates to evaluate and render (1-10)")
     args = parser.parse_args()
 
     run_pipeline(

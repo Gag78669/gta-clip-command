@@ -13,7 +13,6 @@ from sqlalchemy import (
     Index,
 )
 from sqlalchemy.orm import relationship
-from sqlalchemy import UniqueConstraint
 from src.core.db import Base
 
 
@@ -33,8 +32,7 @@ class Creator(Base):
     __tablename__ = "creators"
 
     id = Column(String(32), primary_key=True, default=lambda: generate_id("cr"))
-    owner_id = Column(String(32), nullable=True, index=True)
-    handle = Column(String(128), nullable=False, index=True)
+    handle = Column(String(128), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False)
     channel_url = Column(String(512), nullable=False)
     platform = Column(String(64), nullable=False, default="youtube")  # youtube, twitch, kick
@@ -51,8 +49,6 @@ class Creator(Base):
     final_clips = relationship("FinalClip", back_populates="creator")
     delivery_logs = relationship("DeliveryLog", back_populates="creator")
 
-    __table_args__ = (UniqueConstraint("owner_id", "handle", name="uq_creator_owner_handle"),)
-
 
 class RightsAgreement(Base):
     """Documented legal rights and commercial permissions granting clipping authority."""
@@ -60,7 +56,6 @@ class RightsAgreement(Base):
     __tablename__ = "rights_agreements"
 
     id = Column(String(32), primary_key=True, default=lambda: generate_id("ra"))
-    owner_id = Column(String(32), nullable=True, index=True)
     creator_id = Column(String(32), ForeignKey("creators.id", ondelete="CASCADE"), nullable=False, index=True)
     agreement_type = Column(String(64), nullable=False)  # exclusive, non_exclusive, revenue_share, fair_use_reviewed
     status = Column(String(32), nullable=False, default="active")  # active, expired, revoked, pending
@@ -86,7 +81,6 @@ class MediaSource(Base):
     __tablename__ = "media_sources"
 
     id = Column(String(32), primary_key=True, default=lambda: generate_id("ms"))
-    owner_id = Column(String(32), nullable=True, index=True)
     creator_id = Column(String(32), ForeignKey("creators.id", ondelete="RESTRICT"), nullable=False, index=True)
     title = Column(String(512), nullable=False)
     file_path = Column(String(1024), nullable=False)
@@ -109,7 +103,6 @@ class ProcessingJob(Base):
     __tablename__ = "processing_jobs"
 
     id = Column(String(32), primary_key=True, default=lambda: generate_id("job"))
-    owner_id = Column(String(32), nullable=True, index=True)
     media_id = Column(String(32), ForeignKey("media_sources.id", ondelete="CASCADE"), nullable=False, index=True)
     status = Column(String(32), nullable=False, default="queued")  # queued, running, paused, completed, failed, cancelled
     current_stage = Column(String(64), nullable=False, default="intake")  # 14 pipeline stages
@@ -119,6 +112,7 @@ class ProcessingJob(Base):
     completed_at = Column(DateTime, nullable=True)
     candidate_count = Column(Integer, nullable=False, default=0)
     clip_count = Column(Integer, nullable=False, default=0)
+    requested_clip_count = Column(Integer, nullable=False, default=3)
     error_message = Column(Text, nullable=True)
     stage_metadata = Column(Text, nullable=True)  # JSON-encoded checkpoints for crash resumption
     stage_logs = Column(Text, nullable=True)      # JSON list of structured logs
@@ -138,7 +132,6 @@ class CandidateClip(Base):
     __tablename__ = "candidate_clips"
 
     id = Column(String(32), primary_key=True, default=lambda: generate_id("cand"))
-    owner_id = Column(String(32), nullable=True, index=True)
     job_id = Column(String(32), ForeignKey("processing_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
     start_time = Column(Float, nullable=False)
     end_time = Column(Float, nullable=False)
@@ -162,7 +155,6 @@ class FinalClip(Base):
     __tablename__ = "final_clips"
 
     id = Column(String(32), primary_key=True, default=lambda: generate_id("clip"))
-    owner_id = Column(String(32), nullable=True, index=True)
     candidate_id = Column(String(32), ForeignKey("candidate_clips.id", ondelete="SET NULL"), nullable=True)
     job_id = Column(String(32), ForeignKey("processing_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
     creator_id = Column(String(32), ForeignKey("creators.id", ondelete="RESTRICT"), nullable=False, index=True)
@@ -199,7 +191,6 @@ class DeliveryLog(Base):
     __tablename__ = "delivery_logs"
 
     id = Column(String(32), primary_key=True, default=lambda: generate_id("deliv"))
-    owner_id = Column(String(32), nullable=True, index=True)
     clip_id = Column(String(32), ForeignKey("final_clips.id", ondelete="CASCADE"), nullable=False, index=True)
     creator_id = Column(String(32), ForeignKey("creators.id", ondelete="RESTRICT"), nullable=False, index=True)
     platform = Column(String(64), nullable=False)  # tiktok, youtube_shorts, instagram_reels
@@ -219,50 +210,5 @@ class SystemSetting(Base):
     __tablename__ = "system_settings"
 
     key = Column(String(64), primary_key=True)
-    owner_id = Column(String(32), nullable=True, index=True)
     value = Column(Text, nullable=False)
     updated_at = Column(DateTime, default=now_utc, onupdate=now_utc, nullable=False)
-
-
-class UserAccount(Base):
-    __tablename__ = "user_accounts"
-    id = Column(String(32), primary_key=True, default=lambda: generate_id("usr"))
-    email = Column(String(320), nullable=False, unique=True, index=True)
-    password_hash = Column(String(256), nullable=False)
-    verified_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=now_utc, nullable=False)
-
-
-class AuthSession(Base):
-    __tablename__ = "auth_sessions"
-    token_hash = Column(String(64), primary_key=True)
-    user_id = Column(String(32), ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
-    expires_at = Column(DateTime, nullable=False)
-    created_at = Column(DateTime, default=now_utc, nullable=False)
-
-
-class EmailVerification(Base):
-    __tablename__ = "email_verifications"
-    token_hash = Column(String(64), primary_key=True)
-    user_id = Column(String(32), ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
-    expires_at = Column(DateTime, nullable=False)
-
-
-class DailyUsage(Base):
-    __tablename__ = "daily_usage"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String(32), ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False)
-    usage_date = Column(String(10), nullable=False)
-    reserved_seconds = Column(Integer, nullable=False, default=0)
-    consumed_seconds = Column(Integer, nullable=False, default=0)
-    __table_args__ = (UniqueConstraint("user_id", "usage_date", name="uq_daily_usage_user_date"),)
-
-
-class QuotaReservation(Base):
-    __tablename__ = "quota_reservations"
-    id = Column(String(32), primary_key=True, default=lambda: generate_id("qr"))
-    job_id = Column(String(32), ForeignKey("processing_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(String(32), ForeignKey("user_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
-    usage_date = Column(String(10), nullable=False)
-    seconds = Column(Integer, nullable=False)
-    status = Column(String(16), nullable=False, default="reserved")  # reserved, consumed, released

@@ -9,8 +9,6 @@ import queue
 import sys
 import threading
 import time
-import tempfile
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +20,6 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.core.db import get_db_context
-from src.core.config import get_settings
 from src.core.logger import get_logger
 from src.core.models import ProcessingJob, MediaSource, FinalClip, CandidateClip
 from src.core.exceptions import PipelineCancelled
@@ -77,7 +74,6 @@ class PipelineWorker:
         # Start the dispatcher thread
         self._thread = threading.Thread(target=self._dispatcher_loop, daemon=True, name="worker-dispatcher")
         self._thread.start()
-        self._recover_queued_jobs()
         logger.info("PipelineWorker started.")
 
     # ------------------------------------------------------------------
@@ -90,27 +86,9 @@ class PipelineWorker:
                 for j in stale:
                     j.status = "failed"
                     j.error_message = "Server restarted during processing"
-                    if get_settings().auth_enabled:
-                        from src.core.accounts import settle_reservation
-                        settle_reservation(db, j.id, consume=j.progress_percent >= 25)
                     logger.warning("Marked stale job %s as failed.", j.id)
         except Exception as exc:
             logger.error("Failed to reset stale jobs: %s", exc)
-
-    def _recover_queued_jobs(self) -> None:
-        """Rebuild the in-memory queue from durable database rows after a restart."""
-        try:
-            with get_db_context() as db:
-                jobs = (db.query(ProcessingJob)
-                        .filter(ProcessingJob.status == "queued")
-                        .order_by(ProcessingJob.created_at.asc()).all())
-                pending = [(job.id, job.media_id, job.media.creator.handle if job.media and job.media.creator else "",
-                            job.media.file_path if job.media else "", job.owner_id) for job in jobs]
-            for job_id, media_id, creator_handle, video_path, owner_id in pending:
-                if creator_handle and video_path:
-                    self.enqueue(job_id, media_id, creator_handle, video_path, owner_id)
-        except Exception as exc:
-            logger.exception("Could not restore queued jobs after startup: %s", exc)
 
     # ------------------------------------------------------------------
     # SSE helpers
@@ -130,9 +108,6 @@ class PipelineWorker:
                 pass
 
     def _broadcast(self, event: dict[str, Any]) -> None:
-        from src.core.db import tenant_id
-        owner = tenant_id.get()
-        event.setdefault("owner_id", owner)
         payload = json.dumps(event)
         with self._sse_lock:
             dead: list[asyncio.Queue] = []
@@ -143,25 +118,17 @@ class PipelineWorker:
                     dead.append(q)
             for d in dead:
                 self._sse_queues.remove(d)
-        cfg = get_settings()
-        if cfg.redis_url:
-            try:
-                from src.core.queue import get_redis_client
-                get_redis_client(cfg.redis_url).publish("gta:processing:events", payload)
-            except Exception as exc:
-                logger.warning("Could not publish pipeline event: %s", exc)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def enqueue(self, job_id: str, media_id: str, creator_handle: str, video_path: str, owner_id: str | None = None) -> None:
+    def enqueue(self, job_id: str, media_id: str, creator_handle: str, video_path: str) -> None:
         with self._lock:
             self._state[job_id] = {
                 "job_id": job_id,
                 "media_id": media_id,
                 "creator_handle": creator_handle,
                 "video_path": video_path,
-                "owner_id": owner_id,
                 "status": "queued",
                 "stage": "intake",
                 "progress": 0,
@@ -255,10 +222,6 @@ class PipelineWorker:
                 return
             creator_handle = st["creator_handle"]
             video_path = st["video_path"]
-            owner_id = st.get("owner_id")
-
-        from src.core.db import tenant_id
-        tenant_token = tenant_id.set(owner_id)
 
         logger.info("Starting pipeline for job %s", job_id)
         self._update_job_state(job_id, status="running", stage="intake", progress=5)
@@ -273,7 +236,6 @@ class PipelineWorker:
             name=f"progress-{job_id}",
         )
         log_handlers: list[tuple[logging.Logger, logging.Handler]] = []
-        downloaded_media: Path | None = None
         try:
             # Import run_pipeline lazily to avoid circular import issues at module load
             import importlib
@@ -298,23 +260,20 @@ class PipelineWorker:
 
             # Wrap run_pipeline with pause/cancel checkpoints
             # We rely on run_pipeline being synchronous and returning final_clips list
-            pipeline_video_path = video_path
-            if video_path.startswith("s3://"):
-                from src.core.object_storage import download
-                downloaded_media = Path(tempfile.gettempdir()) / f"gta-source-{uuid.uuid4().hex}{Path(video_path).suffix or '.mp4'}"
-                download(video_path, downloaded_media)
-                pipeline_video_path = str(downloaded_media)
+            with get_db_context() as db:
+                job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
+                max_clips = int(job.requested_clip_count or 3) if job else 3
+
             final_clips = run_pipeline(
-                video_path=pipeline_video_path,
+                video_path=video_path,
                 creator_handle=creator_handle,
+                max_clips=max_clips,
                 job_id=job_id,
                 checkpoint=lambda: self._pipeline_checkpoint(job_id),
             )
 
             # Count results
             clip_count = len(final_clips) if final_clips else 0
-            if owner_id:
-                self._persist_outputs_to_object_storage(job_id, owner_id)
 
             # Count candidates from DB
             candidate_count = 0
@@ -360,38 +319,11 @@ class PipelineWorker:
                 project_logger.removeHandler(handler)
             for handler in {handler for _, handler in log_handlers}:
                 handler.close()
-            if downloaded_media:
-                downloaded_media.unlink(missing_ok=True)
-            tenant_id.reset(tenant_token)
-
-    def _persist_outputs_to_object_storage(self, job_id: str, owner_id: str) -> None:
-        from src.core.object_storage import configured, upload_file
-        from src.core.models import FinalClip
-        if not configured():
-            raise RuntimeError("Object storage is required to persist hosted clip outputs.")
-        with get_db_context() as db:
-            clips = db.query(FinalClip).filter(FinalClip.job_id == job_id).all()
-            for clip in clips:
-                if clip.output_path and not clip.output_path.startswith("s3://"):
-                    path = Path(clip.output_path)
-                    if path.is_file():
-                        clip.output_path = upload_file(path, f"users/{owner_id}/clips/{clip.id}{path.suffix or '.mp4'}", "video/mp4")
-                        path.unlink(missing_ok=True)
-                if clip.thumbnail_path and not clip.thumbnail_path.startswith("s3://"):
-                    path = Path(clip.thumbnail_path)
-                    if path.is_file():
-                        clip.thumbnail_path = upload_file(path, f"users/{owner_id}/thumbnails/{clip.id}{path.suffix or '.jpg'}", "image/jpeg")
-                        path.unlink(missing_ok=True)
 
     def _watch_db_progress(self, job_id: str, stop_event: threading.Event) -> None:
         """Keep in-memory state and SSE clients aligned with pipeline DB checkpoints."""
         while not stop_event.wait(1):
-            tenant_token = None
             try:
-                with self._lock:
-                    owner = (self._state.get(job_id) or {}).get("owner_id")
-                from src.core.db import tenant_id
-                tenant_token = tenant_id.set(owner)
                 with get_db_context() as db:
                     job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
                     if not job:
@@ -404,9 +336,6 @@ class PipelineWorker:
                         "clip_count": job.clip_count,
                         "error": job.error_message,
                     }
-                    if job.current_stage in ("transcription", "signals", "scene_detect", "fusion", "ai_visual", "ai_narrative", "ai_evaluation", "composition", "rendering", "qa", "finalize", "completed"):
-                        from src.core.accounts import settle_reservation
-                        settle_reservation(db, job_id, consume=True)
                 with self._lock:
                     state = self._state.get(job_id)
                     if state is None:
@@ -418,9 +347,6 @@ class PipelineWorker:
                     self._broadcast({"type": "job_update", "job_id": job_id, **snapshot})
             except Exception as exc:
                 logger.warning("Could not refresh progress for %s: %s", job_id, exc)
-            finally:
-                if tenant_token is not None:
-                    tenant_id.reset(tenant_token)
 
     def _pipeline_checkpoint(self, job_id: str) -> None:
         """Wait while paused and stop cleanly when cancelled at a safe boundary."""
@@ -430,19 +356,6 @@ class PipelineWorker:
                 cancel_event = self._cancel_flags.get(job_id)
             if cancel_event is None or cancel_event.is_set():
                 raise PipelineCancelled()
-            try:
-                with get_db_context() as db:
-                    job = db.query(ProcessingJob).filter(ProcessingJob.id == job_id).first()
-                    status = job.status if job else "cancelled"
-                if status == "cancelled":
-                    raise PipelineCancelled()
-                if status == "paused":
-                    time.sleep(0.25)
-                    continue
-            except PipelineCancelled:
-                raise
-            except Exception as exc:
-                logger.warning("Could not read job control state for %s: %s", job_id, exc)
             if pause_event is None or pause_event.wait(timeout=0.25):
                 break
         if cancel_event.is_set():
@@ -477,9 +390,6 @@ class PipelineWorker:
                         j.clip_count = clip_count
                     if error_message is not None:
                         j.error_message = error_message
-                        if status in ("completed", "failed", "cancelled"):
-                            from src.core.accounts import settle_reservation
-                            settle_reservation(db, job_id, consume=(status == "completed" or j.progress_percent >= 25))
         except Exception as exc:
             logger.error("DB sync error for job %s: %s", job_id, exc)
 
