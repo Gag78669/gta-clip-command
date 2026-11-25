@@ -1,6 +1,3 @@
-[tool.vercel]
-entrypoint = "src.dashboard:app"
-
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra -q"
