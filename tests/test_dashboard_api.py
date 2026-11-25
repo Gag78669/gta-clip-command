@@ -1,5 +1,7 @@
 """Integration tests for FastAPI dashboard and review endpoints."""
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi.testclient import TestClient
 from src.dashboard.api import app
@@ -104,3 +106,38 @@ def test_approve_clip_workflow(test_client):
     # Verify status changed
     updated = test_client.get("/api/clips").json()["clips"][0]
     assert updated["approval_status"] == "approved"
+
+
+def test_save_ai_settings_encrypts_api_key_on_sqlite(test_client, monkeypatch, tmp_path):
+    monkeypatch.delenv("CLOUD_KEY_ENCRYPTION_KEY", raising=False)
+    monkeypatch.setattr(
+        "src.core.secrets.get_settings",
+        lambda: SimpleNamespace(data_dir=tmp_path, database_url="sqlite:///test_api.db"),
+    )
+    api_key = "sk-test-not-a-real-provider-key"
+
+    response = test_client.put(
+        "/api/settings/ai",
+        json={"cloud_api_key": api_key},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["api_key_configured"] is True
+    settings = test_client.get("/api/settings/ai")
+    assert settings.status_code == 200
+    assert settings.json()["api_key_configured"] is True
+    assert api_key not in settings.text
+
+
+def test_cloud_connection_returns_available_model_ids(test_client, monkeypatch):
+    available_models = [{"id": "reasoning-model"}, {"id": "vision-model"}]
+    monkeypatch.setattr("src.reasoning.openai_compatible.list_models", lambda base_url, api_key: available_models)
+
+    response = test_client.post(
+        "/api/settings/ai/test",
+        json={"cloud_base_url": "https://api.example.com/v1", "cloud_api_key": "test-key"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["model_count"] == 2
+    assert response.json()["models"] == available_models

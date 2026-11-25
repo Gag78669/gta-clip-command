@@ -26,12 +26,14 @@ def main():
     get_worker()
 
     logger.info(
-        "Launching Human Approval Dashboard at: http://127.0.0.1:8000"
+        "Launching Human Approval Dashboard at: http://%s:%s",
+        settings.api_host,
+        settings.api_port,
     )
     uvicorn.run(
         "src.dashboard.api:app",
-        host="127.0.0.1",
-        port=8000,
+        host=settings.api_host,
+        port=settings.api_port,
         reload=False,
         log_level="info",
     )
