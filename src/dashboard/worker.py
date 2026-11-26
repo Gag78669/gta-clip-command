@@ -21,7 +21,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from src.core.db import get_db_context
 from src.core.logger import get_logger
-from src.core.models import ProcessingJob, MediaSource, FinalClip, CandidateClip
+from src.core.models import ProcessingJob, MediaSource, Creator, FinalClip, CandidateClip
 from src.core.exceptions import PipelineCancelled
 
 logger = get_logger("dashboard.worker")
@@ -74,6 +74,7 @@ class PipelineWorker:
         # Start the dispatcher thread
         self._thread = threading.Thread(target=self._dispatcher_loop, daemon=True, name="worker-dispatcher")
         self._thread.start()
+        self._recover_queued_jobs()
         logger.info("PipelineWorker started.")
 
     # ------------------------------------------------------------------
@@ -89,6 +90,29 @@ class PipelineWorker:
                     logger.warning("Marked stale job %s as failed.", j.id)
         except Exception as exc:
             logger.error("Failed to reset stale jobs: %s", exc)
+
+    def _recover_queued_jobs(self) -> None:
+        """Restore persisted queued jobs after a dashboard restart."""
+        try:
+            with get_db_context() as db:
+                queued = (
+                    db.query(ProcessingJob, MediaSource, Creator)
+                    .join(MediaSource, ProcessingJob.media_id == MediaSource.id)
+                    .join(Creator, MediaSource.creator_id == Creator.id)
+                    .filter(ProcessingJob.status == "queued")
+                    .order_by(ProcessingJob.created_at.asc())
+                    .all()
+                )
+                recovered = [
+                    (job.id, media.id, creator.handle, media.file_path)
+                    for job, media, creator in queued
+                ]
+            for job_id, media_id, creator_handle, video_path in recovered:
+                self.enqueue(job_id, media_id, creator_handle, video_path)
+            if recovered:
+                logger.info("Recovered %d queued job(s) after startup.", len(recovered))
+        except Exception as exc:
+            logger.exception("Could not recover queued jobs on startup: %s", exc)
 
     # ------------------------------------------------------------------
     # SSE helpers
@@ -122,8 +146,12 @@ class PipelineWorker:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def enqueue(self, job_id: str, media_id: str, creator_handle: str, video_path: str) -> None:
+    def enqueue(self, job_id: str, media_id: str, creator_handle: str, video_path: str) -> bool:
         with self._lock:
+            current = self._state.get(job_id)
+            if current and current.get("status") in ("queued", "running", "paused"):
+                logger.info("Ignoring duplicate enqueue for job %s (status=%s).", job_id, current["status"])
+                return False
             self._state[job_id] = {
                 "job_id": job_id,
                 "media_id": media_id,
@@ -140,6 +168,7 @@ class PipelineWorker:
         self._job_queue.put(job_id)
         self._broadcast({"type": "job_queued", "job_id": job_id})
         logger.info("Job %s enqueued.", job_id)
+        return True
 
     def pause(self, job_id: str) -> None:
         with self._lock:

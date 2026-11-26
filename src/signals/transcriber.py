@@ -1,7 +1,11 @@
 """High-speed local speech-to-text with word-level timestamps using Faster-Whisper."""
 
 import json
+import subprocess
+import tempfile
+import time
 from pathlib import Path
+import httpx
 import numpy as np
 import soundfile as sf
 from pydantic import BaseModel, Field
@@ -105,7 +109,12 @@ class SpeechTranscriber:
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         stem = cache_name or audio_path.stem
-        cache_file = cache_dir / f"{stem}_transcript.json"
+        from src.reasoning.provider_config import get_ai_config
+        ai = get_ai_config()
+        cloud_transcription = ai.get("transcription_provider") == "openai_compatible"
+        model_id = ai.get("cloud_transcription_model") or "whisper-large-v3-turbo"
+        cache_suffix = f"_cloud_{model_id.replace('/', '_')}_transcript.json" if cloud_transcription else "_transcript.json"
+        cache_file = cache_dir / f"{stem}{cache_suffix}"
 
         # Check cached transcript
         if cache_file.exists() and cache_file.stat().st_size > 10:
@@ -113,6 +122,9 @@ class SpeechTranscriber:
             with open(cache_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return FullTranscript.model_validate(data)
+
+        if cloud_transcription:
+            return self._transcribe_cloud(audio_path, cache_file, ai, model_id)
 
         model = self._load_model()
         logger.info("Transcribing audio: %s", audio_path.name)
@@ -168,4 +180,105 @@ class SpeechTranscriber:
             info.language,
             cache_file.name,
         )
+        return transcript
+
+    def _transcribe_cloud(
+        self, audio_path: Path, cache_file: Path, ai: dict[str, str], model_id: str
+    ) -> FullTranscript:
+        """Transcribe via an OpenAI-compatible audio endpoint in bounded MP3 chunks."""
+        api_key = ai.get("cloud_api_key", "")
+        if not api_key:
+            raise RuntimeError("Cloud transcription is selected, but no API key is saved in Settings.")
+        base_url = ai.get("cloud_base_url", "https://api.openai.com/v1").rstrip("/")
+        duration = float(sf.info(str(audio_path)).duration)
+        chunk_seconds = 300
+        all_segments: list[TranscriptSegment] = []
+        language = "unknown"
+        chunk_count = max(1, int((duration + chunk_seconds - 1) // chunk_seconds))
+        logger.info("Cloud transcription with %s: %.1f seconds in %d chunks.", model_id, duration, chunk_count)
+
+        with tempfile.TemporaryDirectory(prefix="gta_whisper_") as tmp:
+            for chunk_index, start in enumerate(range(0, max(1, int(duration + 0.999)), chunk_seconds)):
+                chunk_path = Path(tmp) / f"audio_{chunk_index:04d}.mp3"
+                command = [
+                    settings.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y",
+                    "-ss", str(start), "-t", str(chunk_seconds), "-i", str(audio_path),
+                    "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", str(chunk_path),
+                ]
+                result = subprocess.run(command, capture_output=True, text=True, check=False)
+                if result.returncode or not chunk_path.exists():
+                    raise RuntimeError("Could not prepare audio for cloud transcription: " + (result.stderr[-1200:].strip() or "FFmpeg failed."))
+
+                payload = None
+                for attempt in range(3):
+                    try:
+                        with chunk_path.open("rb") as audio_file:
+                            response = httpx.post(
+                                f"{base_url}/audio/transcriptions",
+                                headers={"Authorization": f"Bearer {api_key}"},
+                                files={"file": (chunk_path.name, audio_file, "audio/mpeg")},
+                                data={
+                                    "model": model_id,
+                                    "response_format": "verbose_json",
+                                    "timestamp_granularities[]": ["word", "segment"],
+                                },
+                                timeout=300.0,
+                            )
+                        if response.status_code == 429 or response.status_code >= 500:
+                            if attempt < 2:
+                                retry_after = response.headers.get("Retry-After", "")
+                                delay = min(20.0, float(retry_after)) if retry_after.isdigit() else 2.0 * (attempt + 1)
+                                logger.warning("Transcription provider returned HTTP %d; retrying chunk %d after %.0fs.", response.status_code, chunk_index + 1, delay)
+                                time.sleep(delay)
+                                continue
+                        response.raise_for_status()
+                        payload = response.json()
+                        break
+                    except httpx.HTTPStatusError as exc:
+                        detail = exc.response.text[:500].replace(api_key, "[redacted]")
+                        raise RuntimeError(f"Cloud transcription failed (HTTP {exc.response.status_code}): {detail}") from None
+                    except httpx.RequestError as exc:
+                        if attempt < 2:
+                            time.sleep(2.0 * (attempt + 1))
+                            continue
+                        raise RuntimeError(f"Could not reach the cloud transcription provider: {type(exc).__name__}") from None
+
+                if not isinstance(payload, dict):
+                    raise RuntimeError("The transcription provider returned an invalid response.")
+                language = payload.get("language") or language
+                raw_segments = payload.get("segments") or []
+                flat_words = payload.get("words") or []
+                for raw in raw_segments:
+                    seg_start = float(raw.get("start", 0))
+                    seg_end = float(raw.get("end", seg_start))
+                    raw_words = raw.get("words") or [
+                        word for word in flat_words
+                        if float(word.get("start", -1)) >= seg_start - 0.05
+                        and float(word.get("start", -1)) <= seg_end + 0.05
+                    ]
+                    words = [
+                        WordTiming(
+                            word=str(word.get("word", word.get("text", ""))).strip(),
+                            start=round(start + float(word.get("start", 0)), 2),
+                            end=round(start + float(word.get("end", word.get("start", 0))), 2),
+                            probability=1.0,
+                        )
+                        for word in raw_words if word.get("word", word.get("text"))
+                    ]
+                    all_segments.append(TranscriptSegment(
+                        segment_id=len(all_segments),
+                        start=round(start + seg_start, 2),
+                        end=round(start + seg_end, 2),
+                        text=str(raw.get("text", "")).strip(),
+                        words=words,
+                    ))
+                logger.info("Cloud transcription chunk %d/%d complete (%d segments).", chunk_index + 1, chunk_count, len(raw_segments))
+
+        transcript = FullTranscript(
+            audio_path=str(audio_path), language=language,
+            duration_seconds=round(duration, 2), segments=all_segments,
+        )
+        with cache_file.open("w", encoding="utf-8") as f:
+            json.dump(transcript.model_dump(), f, indent=2)
+        logger.info("Cloud transcription completed: %d segments in %s.", len(all_segments), language)
         return transcript

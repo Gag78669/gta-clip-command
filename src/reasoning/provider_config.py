@@ -9,12 +9,14 @@ def get_ai_config() -> dict[str, str]:
     config = {
         "reasoning_provider": "ollama",
         "vision_provider": "ollama",
+        "transcription_provider": "faster_whisper",
         "reasoning_model": get_settings().reasoning_model,
         "vision_model": get_settings().vision_model,
         "cloud_base_url": "https://api.openai.com/v1",
         "cloud_api_key": "",
         "cloud_reasoning_model": "",
         "cloud_vision_model": "",
+        "cloud_transcription_model": "whisper-large-v3-turbo",
     }
     try:
         with get_db_context() as db:

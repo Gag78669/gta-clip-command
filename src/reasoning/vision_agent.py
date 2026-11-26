@@ -16,6 +16,7 @@ class VisualTags(BaseModel):
     """Visual analysis results for candidate gameplay frames."""
     has_webcam: bool = Field(default=False, description="Whether creator facecam is detected")
     webcam_position: str = Field(default="top_right", description="Location: top_left, top_right, bottom_left, bottom_right, none")
+    two_person_side_by_side: bool = Field(default=False, description="Two visible speakers/subjects are arranged on the left and right of a landscape frame")
     streamer_reaction: str = Field(default="neutral", description="Detected emotion: laughing, screaming, shocked, laughing_hard, neutral")
     wanted_level_stars: int = Field(default=0, description="Police wanted stars (0 to 5)")
     gameplay_tags: list[str] = Field(default_factory=list, description="Tags: police_chase, crash, shootout, stunt, explosion, sniper")
@@ -50,12 +51,13 @@ class VisionAgent:
         except Exception:
             send_frame = primary_frame
 
-        prompt = """You are an expert short-form video editor analyzing gameplay from an unspecified video game.
-Identify only events and interface elements that are visible. Do not assume the game title or invent action.
+        prompt = """You are an expert short-form video editor analyzing a creator video. It may be gameplay, a podcast, an interview, or another landscape video.
+Identify only people, events, and interface elements that are visible. Do not assume the game title or invent action. Pay close attention to where people and important game UI are located because the final clip will be portrait.
 Look closely at the provided screenshot and return a strictly formatted JSON object with these keys:
 {
   "has_webcam": boolean (true if creator facecam box is visible on screen),
   "webcam_position": string ("top_left", "top_right", "bottom_left", "bottom_right", or "none"),
+  "two_person_side_by_side": boolean (true when two speakers/people are visible in the landscape frame, especially podcast or interview participants placed toward opposite left and right sides),
   "streamer_reaction": string ("laughing", "screaming", "shocked", "neutral"),
   "wanted_level_stars": integer (0 to 5 when a GTA wanted-level indicator is visible, otherwise 0),
   "gameplay_tags": array of short factual strings (e.g. ["chase", "crash", "explosion", "combat", "stunt", "goal_scored"]),

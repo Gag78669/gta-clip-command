@@ -23,7 +23,7 @@ class RankedClipSpec(BaseModel):
     virality_score: int = Field(description="Predicted retention and shareability from 0 to 100")
     humor_score: int = Field(description="Comedy rating from 0 to 100")
     action_score: int = Field(description="Gameplay intensity rating from 0 to 100")
-    layout_mode: str = Field(default="stacked", description="stacked, action_crop, or blurred_pillar")
+    layout_mode: str = Field(default="fit_blur", description="podcast_split, stacked, fit_blur, action_crop, or blurred_pillar")
     subtitle_style: str = Field(default="neon_yellow_bounce", description="Subtitle animation style")
     call_to_action: str = Field(default="Follow for more gaming moments!", description="Ending CTA")
 
@@ -44,8 +44,8 @@ class NarrativeAgent:
         creator_handle: str = "@Creator",
     ) -> RankedClipSpec:
         """Score candidate highlight and generate viral hooks with Qwen3:8B."""
-        prompt = f"""You are a short-form video producer for a gaming creator.
-Evaluate this gameplay moment and generate an engaging vertical clip specification.
+        prompt = f"""You are a short-form video editor creating a portrait clip from landscape creator footage.
+Evaluate this moment and choose a layout that keeps the visible people and important content inside the frame.
 
 CONTEXT:
 Creator: {creator_handle}
@@ -54,6 +54,7 @@ Audio Peak: {candidate.audio_peak_dbfs:.1f} dBFS (Initial Excitement: {candidate
 Visual Gameplay Events: {', '.join(visual_tags.gameplay_tags)}
 Wanted Level Stars: {visual_tags.wanted_level_stars} Stars
 Facecam Reaction: {visual_tags.streamer_reaction} (Webcam detected: {visual_tags.has_webcam})
+Two people side by side: {visual_tags.two_person_side_by_side}
 Visual Summary: {visual_tags.summary}
 Dialogue / Transcript:
 "{candidate.dialogue_excerpt}"
@@ -62,10 +63,12 @@ INSTRUCTIONS:
 1. Determine optimal trim: Trim dead air at the beginning and snap tightly to the setup, climax, and funny punchline. Start must be >= {candidate.start_time:.1f} and end <= {candidate.end_time:.1f}. Duration should ideally be between 25s and 60s.
 2. Craft a viral Title (high click-through rate, curiosity inducing, e.g. "When a 5-Star Wanted Level Goes Completely Wrong").
 3. Craft a 3-6 word Hook Text to display on screen during the first 3 seconds (e.g. "DID NOT SEE THAT COMING 💀").
-4. Choose layout mode:
-   - "stacked" if has_webcam is true (facecam top, gameplay bottom).
-   - "action_crop" if no webcam and centered action.
-   - "blurred_pillar" if wide visual landscape without heavy movement.
+4. Choose layout mode to avoid losing off-center subjects or game UI:
+   - "podcast_split" when two people/speakers sit on opposite left and right sides; each half is shown in its own portrait panel.
+   - "stacked" when a streamer facecam and gameplay are both visible; the full gameplay frame will be preserved in the lower panel.
+   - "action_crop" only when there is one clear subject centered in the landscape frame and a crop will not cut off important content.
+   - "fit_blur" when unsure, when important content is near the edges, or when the whole landscape scene should remain visible.
+   - "blurred_pillar" for wide scenic footage that benefits from a centered, uncropped landscape image.
 5. Rate virality_score, humor_score, and action_score on a 0-100 scale.
 
 Return ONLY a valid JSON object matching this schema:
@@ -78,7 +81,7 @@ Return ONLY a valid JSON object matching this schema:
   "virality_score": int (0-100),
   "humor_score": int (0-100),
   "action_score": int (0-100),
-  "layout_mode": "stacked" | "action_crop" | "blurred_pillar",
+  "layout_mode": "podcast_split" | "stacked" | "fit_blur" | "action_crop" | "blurred_pillar",
   "subtitle_style": "neon_yellow_bounce" | "clean_white" | "danger_red",
   "call_to_action": "string"
 }}
@@ -101,6 +104,14 @@ Return ONLY a valid JSON object matching this schema:
             opt_start = max(candidate.start_time, min(opt_start, candidate.end_time - 10.0))
             opt_end = min(candidate.end_time, max(opt_end, opt_start + 10.0))
 
+            layout_mode = str(res.get("layout_mode", "fit_blur"))
+            if visual_tags.two_person_side_by_side:
+                layout_mode = "podcast_split"
+            elif visual_tags.has_webcam:
+                layout_mode = "stacked"
+            elif layout_mode not in {"podcast_split", "stacked", "fit_blur", "action_crop", "blurred_pillar"}:
+                layout_mode = "fit_blur"
+
             clip_spec = RankedClipSpec(
                 candidate_id=candidate.candidate_id,
                 title=res.get("title", f"Gaming highlight - {candidate.candidate_id}"),
@@ -111,7 +122,7 @@ Return ONLY a valid JSON object matching this schema:
                 virality_score=int(res.get("virality_score", 80)),
                 humor_score=int(res.get("humor_score", 75)),
                 action_score=int(res.get("action_score", 85)),
-                layout_mode=res.get("layout_mode", "stacked" if visual_tags.has_webcam else "action_crop"),
+                layout_mode=layout_mode,
                 subtitle_style=res.get("subtitle_style", "neon_yellow_bounce"),
                 call_to_action=res.get("call_to_action", "Follow for more gaming moments!"),
             )
@@ -135,7 +146,7 @@ Return ONLY a valid JSON object matching this schema:
                 virality_score=int(candidate.initial_excitement_score),
                 humor_score=70,
                 action_score=80,
-                layout_mode="stacked" if visual_tags.has_webcam else "action_crop",
+                layout_mode=("podcast_split" if visual_tags.two_person_side_by_side else "stacked" if visual_tags.has_webcam else "fit_blur"),
                 subtitle_style="neon_yellow_bounce",
                 call_to_action="Follow for more gaming moments!",
             )

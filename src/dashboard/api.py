@@ -146,16 +146,20 @@ class CreatorUpdateRequest(BaseModel):
 class ModelSelectRequest(BaseModel):
     reasoning_model: Optional[str] = None
     vision_model: Optional[str] = None
+    reasoning_provider: str = "ollama"
+    vision_provider: str = "ollama"
 
 
 class AISettingsRequest(BaseModel):
     reasoning_provider: str = "ollama"
     vision_provider: str = "ollama"
+    transcription_provider: str = "faster_whisper"
     cloud_base_url: str = "https://api.openai.com/v1"
     cloud_api_key: Optional[str] = None
     clear_api_key: bool = False
     cloud_reasoning_model: str = ""
     cloud_vision_model: str = ""
+    cloud_transcription_model: str = "whisper-large-v3-turbo"
 
 
 # ---------------------------------------------------------------------------
@@ -543,9 +547,12 @@ def queue_start(job_id: str, db: Session = Depends(get_db)):
     if not creator:
         raise HTTPException(status_code=404, detail="Creator not found")
 
+    if job.status != "queued":
+        raise HTTPException(status_code=409, detail=f"Job cannot be started while its status is '{job.status}'.")
+
     worker = _get_worker()
-    worker.enqueue(job.id, media.id, creator.handle, media.file_path)
-    return {"status": "queued", "job_id": job_id}
+    enqueued = worker.enqueue(job.id, media.id, creator.handle, media.file_path)
+    return {"status": "queued" if enqueued else "already_queued", "job_id": job_id}
 
 
 @app.post("/api/queue/{job_id}/pause")
@@ -1270,12 +1277,31 @@ async def get_models(db: Session = Depends(get_db)):
     except Exception:
         pass
 
-    # Read active models from system_settings
+    from src.reasoning.provider_config import get_ai_config
+    ai = get_ai_config()
+    cloud_models: list[dict[str, str]] = []
+    if ai["cloud_api_key"] and "openai_compatible" in (ai["reasoning_provider"], ai["vision_provider"]):
+        try:
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                response = await client.get(
+                    f"{ai['cloud_base_url'].rstrip('/')}/models",
+                    headers={"Authorization": f"Bearer {ai['cloud_api_key']}"},
+                )
+                response.raise_for_status()
+                payload = response.json()
+                cloud_models = [
+                    {"name": model["id"], "provider": "Cloud", "size": None, "modified_at": None}
+                    for model in payload.get("data", [])
+                    if isinstance(model, dict) and isinstance(model.get("id"), str) and model["id"].strip()
+                ]
+        except Exception as exc:
+            logger.warning("Could not list cloud models (%s).", type(exc).__name__)
+
     from src.core.models import SystemSetting
     reasoning_setting = db.query(SystemSetting).filter(SystemSetting.key == "ai_reasoning_model").first() or db.query(SystemSetting).filter(SystemSetting.key == "reasoning_model").first()
     vision_setting = db.query(SystemSetting).filter(SystemSetting.key == "ai_vision_model").first() or db.query(SystemSetting).filter(SystemSetting.key == "vision_model").first()
-    active_reasoning = reasoning_setting.value if reasoning_setting else settings.reasoning_model
-    active_vision = vision_setting.value if vision_setting else settings.vision_model
+    active_reasoning = ai["reasoning_model"] or (reasoning_setting.value if reasoning_setting else settings.reasoning_model)
+    active_vision = ai["vision_model"] or (vision_setting.value if vision_setting else settings.vision_model)
 
     loaded_models = ps_data.get("models", [])
     gpu_total = gpu_info.get("total_mb")
@@ -1285,6 +1311,9 @@ async def get_models(db: Session = Depends(get_db)):
         "ollama_connected": ollama_connected,
         "ollama_version": ollama_version,
         "models": tags_data.get("models", []),
+        "cloud_models": cloud_models,
+        "reasoning_provider": ai["reasoning_provider"],
+        "vision_provider": ai["vision_provider"],
         "loaded_model": loaded_models[0].get("name", "") if loaded_models else "",
         "gpu_vram_used_mb": gpu_used,
         "gpu_vram_total_mb": gpu_total,
@@ -1302,14 +1331,22 @@ async def get_models(db: Session = Depends(get_db)):
 @app.post("/api/models/select")
 def select_models(req: ModelSelectRequest, db: Session = Depends(get_db)):
     from src.core.models import SystemSetting
-    for key, value in (("ai_reasoning_model", req.reasoning_model), ("ai_vision_model", req.vision_model)):
-        if value:
-            s = db.query(SystemSetting).filter(SystemSetting.key == key).first()
-            if s:
-                s.value = value
-                s.updated_at = _now()
-            else:
-                db.add(SystemSetting(key=key, value=value, updated_at=_now()))
+    if req.reasoning_provider not in ("ollama", "openai_compatible") or req.vision_provider not in ("ollama", "openai_compatible"):
+        raise HTTPException(status_code=422, detail="Unsupported model provider")
+    updates = []
+    if req.reasoning_model is not None:
+        key = "ai_cloud_reasoning_model" if req.reasoning_provider == "openai_compatible" else "ai_reasoning_model"
+        updates.append((key, req.reasoning_model))
+    if req.vision_model is not None:
+        key = "ai_cloud_vision_model" if req.vision_provider == "openai_compatible" else "ai_vision_model"
+        updates.append((key, req.vision_model))
+    for key, value in updates:
+        s = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+        if s:
+            s.value = value
+            s.updated_at = _now()
+        else:
+            db.add(SystemSetting(key=key, value=value, updated_at=_now()))
     db.commit()
     return {"status": "updated"}
 
@@ -1324,9 +1361,11 @@ def get_ai_settings(db: Session = Depends(get_db)):
     return {
         "reasoning_provider": values.get("ai_reasoning_provider", "ollama"),
         "vision_provider": values.get("ai_vision_provider", "ollama"),
+        "transcription_provider": values.get("ai_transcription_provider", "faster_whisper"),
         "cloud_base_url": values.get("ai_cloud_base_url", "https://api.openai.com/v1"),
         "cloud_reasoning_model": values.get("ai_cloud_reasoning_model", ""),
         "cloud_vision_model": values.get("ai_cloud_vision_model", ""),
+        "cloud_transcription_model": values.get("ai_cloud_transcription_model", "whisper-large-v3-turbo"),
         "api_key_configured": has_usable_secret(encrypted_key),
     }
 
@@ -1335,7 +1374,9 @@ def get_ai_settings(db: Session = Depends(get_db)):
 def update_ai_settings(req: AISettingsRequest, db: Session = Depends(get_db)):
     from src.core.models import SystemSetting
     if req.reasoning_provider not in ("ollama", "openai_compatible") or req.vision_provider not in ("ollama", "openai_compatible"):
-        raise HTTPException(status_code=400, detail="Provider must be Ollama or OpenAI-compatible.")
+        raise HTTPException(status_code=400, detail="Reasoning and vision providers must be Ollama or OpenAI-compatible.")
+    if req.transcription_provider not in ("faster_whisper", "openai_compatible"):
+        raise HTTPException(status_code=400, detail="Transcription provider must be Faster-Whisper or OpenAI-compatible.")
     base_url = req.cloud_base_url.strip().rstrip("/")
     parsed_url = urlsplit(base_url)
     local_hosts = {"localhost", "127.0.0.1", "::1"}
@@ -1346,9 +1387,11 @@ def update_ai_settings(req: AISettingsRequest, db: Session = Depends(get_db)):
     updates = {
         "ai_reasoning_provider": req.reasoning_provider,
         "ai_vision_provider": req.vision_provider,
+        "ai_transcription_provider": req.transcription_provider,
         "ai_cloud_base_url": base_url,
         "ai_cloud_reasoning_model": req.cloud_reasoning_model.strip(),
         "ai_cloud_vision_model": req.cloud_vision_model.strip(),
+        "ai_cloud_transcription_model": req.cloud_transcription_model.strip() or "whisper-large-v3-turbo",
     }
     if req.clear_api_key:
         updates["ai_cloud_api_key"] = ""

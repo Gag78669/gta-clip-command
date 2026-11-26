@@ -8,9 +8,10 @@ The application keeps source media, its SQLite database, model settings, and exp
 
 - Creator registration and a documented permission gate before footage can be processed.
 - Candidate detection from audio energy, speech, scene changes, and gameplay signals.
-- Local speech transcription with Faster-Whisper.
+- Local speech transcription with Faster-Whisper, with optional OpenAI-compatible cloud Whisper transcription.
 - Local vision and reasoning through Ollama, with optional OpenAI-compatible hosted models.
-- Vertical reframing, subtitles, loudness normalization, thumbnails, and FFmpeg rendering.
+- Subject-aware vertical layouts: podcast speakers can be split into stacked panels, streamer layouts preserve the full gameplay frame, and uncertain scenes use a full-frame fit over a blurred background instead of a center crop.
+- Subtitles, loudness normalization, thumbnails, and FFmpeg rendering.
 - A browser dashboard for upload, queue monitoring, creator management, clip review, and approval.
 - Per-creator rights management with archived permission documents and agreement history.
 - Live queue progress and pipeline stage logs, plus a Library for previewing generated clips.
