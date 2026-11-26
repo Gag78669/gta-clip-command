@@ -4,6 +4,14 @@ GTA CLIP COMMAND is a local-first workstation for finding, editing, reviewing, a
 
 The application keeps source media, its SQLite database, model settings, and exports on the local machine by default. Optional OpenAI-compatible hosted models can be configured in the dashboard; hosted inference may incur provider charges and sends the selected transcript or sampled frames to that provider.
 
+## Choose a version
+
+- **Run locally:** use the [`local` branch](https://github.com/Gag78669/gta-clip-command/tree/local). It runs the frontend and processing backend together on your computer at `http://127.0.0.1:8000`; no Vercel or Tailscale backend connection is needed. Clone it with:
+  ```powershell
+  git clone --branch local --single-branch https://github.com/Gag78669/gta-clip-command.git
+  ```
+- **Use the hosted Vercel frontend:** use `main`. It needs a running backend and asks you to connect to one in Settings.
+
 ## Features
 
 - Creator registration and a documented permission gate before footage can be processed.
