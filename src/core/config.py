@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from functools import lru_cache
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     target_width: int = 1080
     target_height: int = 1920
     target_fps: int = 60
+
+    # Single-owner dashboard access. Secrets are read from the local .env file or process environment.
+    auth_enabled: bool = False
+    dashboard_username: str = ""
+    dashboard_password: SecretStr = Field(default_factory=lambda: SecretStr(""))
+    dashboard_session_secret: SecretStr = Field(default_factory=lambda: SecretStr(""))
 
     # API Server
     api_host: str = "127.0.0.1"

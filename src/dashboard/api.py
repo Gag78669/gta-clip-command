@@ -7,17 +7,19 @@ import hashlib
 import json
 import os
 import subprocess
+from contextlib import asynccontextmanager
 import sys
 import threading
 from datetime import date, datetime, time, timezone
+from fractions import Fraction
 import math
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
-from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, Response
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import func, text
@@ -30,11 +32,58 @@ from src.core.models import (
 )
 from src.core.config import get_settings
 from src.core.logger import get_logger
+from src.dashboard.auth import (
+    SESSION_COOKIE_NAME,
+    SESSION_TTL_SECONDS,
+    create_session_token,
+    credentials_are_valid,
+    get_auth_settings,
+    session_token_is_valid,
+)
 
 logger = get_logger("dashboard.api")
 settings = get_settings()
 
-app = FastAPI(title="GTA CLIP COMMAND API", version="2.0.0")
+
+@asynccontextmanager
+async def app_lifespan(_: FastAPI):
+    get_auth_settings()
+    yield
+
+
+app = FastAPI(title="GTA CLIP COMMAND API", version="2.0.0", lifespan=app_lifespan)
+
+
+@app.middleware("http")
+async def single_owner_auth(request: Request, call_next):
+    auth_settings = get_auth_settings()
+    public_paths = {"/healthz", "/api/auth/status", "/api/auth/login", "/api/auth/logout"}
+    protected_path = (
+        request.url.path.startswith(("/api/", "/video/", "/thumb/", "/docs", "/redoc"))
+        or request.url.path == "/openapi.json"
+    )
+    if auth_settings.enabled and protected_path and request.url.path not in public_paths:
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        if not session_token_is_valid(token, auth_settings):
+            response = JSONResponse(
+                {"detail": "Authentication required."},
+                status_code=401,
+                headers={"Cache-Control": "no-store"},
+            )
+        else:
+            response = await call_next(request)
+    else:
+        response = await call_next(request)
+
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Strict-Transport-Security", "max-age=63072000")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.path.startswith("/api/auth/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -66,6 +115,11 @@ class ClipEditRequest(BaseModel):
 
 class BulkApproveRequest(BaseModel):
     clip_ids: list[str]
+
+
+class DashboardLoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 class CreatorCreateRequest(BaseModel):
@@ -202,7 +256,7 @@ def _ffprobe_metadata(path: Path) -> dict:
             "duration": float(info.get("format", {}).get("duration", 0)),
             "width": int(video_stream.get("width", 1920)),
             "height": int(video_stream.get("height", 1080)),
-            "fps": eval(video_stream.get("avg_frame_rate", "60/1")),
+            "fps": float(Fraction(video_stream.get("avg_frame_rate", "60/1"))),
         }
     except Exception:
         return {"duration": 0.0, "width": 1920, "height": 1080, "fps": 60.0}
@@ -222,6 +276,61 @@ def _storage_gb(directory: Path) -> float:
     except Exception:
         pass
     return round(total / (1024 ** 3), 3)
+
+
+# ---------------------------------------------------------------------------
+# Health and single-owner authentication
+# ---------------------------------------------------------------------------
+
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    return {"status": "ok"}
+
+
+@app.get("/api/auth/status")
+def auth_status(request: Request):
+    auth_settings = get_auth_settings()
+    return {
+        "auth_enabled": auth_settings.enabled,
+        "authenticated": (
+            not auth_settings.enabled
+            or session_token_is_valid(request.cookies.get(SESSION_COOKIE_NAME), auth_settings)
+        ),
+    }
+
+
+@app.post("/api/auth/login")
+def auth_login(payload: DashboardLoginRequest, response: Response):
+    auth_settings = get_auth_settings()
+    if not auth_settings.enabled:
+        raise HTTPException(status_code=409, detail="Dashboard authentication is disabled.")
+    if not credentials_are_valid(payload.username, payload.password, auth_settings):
+        raise HTTPException(status_code=401, detail="Username or password is incorrect.")
+
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=create_session_token(auth_settings),
+        max_age=SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return {"authenticated": True}
+
+
+@app.post("/api/auth/logout")
+def auth_logout(response: Response):
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return {"authenticated": False}
 
 
 # ---------------------------------------------------------------------------

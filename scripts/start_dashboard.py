@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.core.config import get_settings
 from src.core.db import init_db
 from src.core.logger import get_logger
+from src.dashboard.auth import get_auth_settings
 from src.dashboard.worker import get_worker
 
 logger = get_logger("scripts.dashboard")
@@ -17,6 +18,14 @@ settings = get_settings()
 
 
 def main():
+    auth_settings = get_auth_settings()
+    if not auth_settings.enabled:
+        raise RuntimeError(
+            "Set AUTH_ENABLED=true and configure owner credentials in .env before starting private access."
+        )
+    if settings.api_host not in {"127.0.0.1", "localhost", "::1"}:
+        raise RuntimeError("For private Tailscale access, API_HOST must bind only to loopback.")
+
     # Initialize DB tables + run migrations
     logger.info("Running database initialization and migrations...")
     init_db()
@@ -30,6 +39,8 @@ def main():
         settings.api_host,
         settings.api_port,
     )
+    logger.info("For private tailnet access, run: tailscale serve --bg %s", settings.api_port)
+    logger.info("Use `tailscale serve status` to view the private dashboard URL.")
     uvicorn.run(
         "src.dashboard.api:app",
         host=settings.api_host,

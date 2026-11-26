@@ -323,6 +323,19 @@ textarea.form-control{resize:vertical;min-height:80px}
 /* ===== AI MODELS ===== */
 .ollama-status{display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--panel);border-radius:8px;margin-bottom:16px;border-left:3px solid var(--border)}
 .model-row.loaded{background:rgba(0,240,255,.05);border-left:3px solid var(--cyan)}
+
+/* ===== SINGLE-OWNER ACCESS ===== */
+#auth-gate{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:24px;background:rgba(5,6,12,.94);backdrop-filter:blur(12px)}
+#auth-gate[hidden]{display:none}
+.auth-panel{width:min(100%,420px);padding:32px;background:var(--card);border:1px solid var(--border);border-top:2px solid var(--pink);border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.55)}
+.auth-eyebrow{font-family:'Chakra Petch',sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan);margin-bottom:10px}
+.auth-title{font-family:'Chakra Petch',sans-serif;font-size:24px;font-weight:700;color:var(--text);margin-bottom:6px}
+.auth-copy{font-size:13px;color:var(--text-dim);margin-bottom:24px}
+.auth-form{display:grid;gap:14px}
+.auth-form .form-group{margin:0}
+.auth-error{min-height:20px;color:var(--red);font-size:12px}
+.auth-submit{width:100%;justify-content:center}
+@media(max-width:480px){.auth-panel{padding:24px}}
 </style>
 </head>
 <body>
@@ -336,6 +349,7 @@ textarea.form-control{resize:vertical;min-height:80px}
       <div id="sse-dot"></div>
       <span id="sse-label">Disconnected</span>
     </div>
+    <button id="auth-lock-button" class="btn btn-ghost btn-sm" type="button" onclick="logoutDashboard()" hidden>Lock</button>
     <div id="header-time" class="font-chakra"></div>
   </div>
 </div>
@@ -768,6 +782,27 @@ textarea.form-control{resize:vertical;min-height:80px}
   </div>
 </div>
 
+<!-- SINGLE-OWNER LOGIN GATE -->
+<div id="auth-gate" role="dialog" aria-modal="true" aria-labelledby="auth-title" aria-hidden="true" hidden>
+  <section class="auth-panel">
+    <div class="auth-eyebrow">Private dashboard</div>
+    <h1 id="auth-title" class="auth-title">Sign in to continue</h1>
+    <p class="auth-copy">Use the owner credentials configured for this dashboard.</p>
+    <form id="auth-form" class="auth-form">
+      <div class="form-group">
+        <label class="form-label" for="auth-username">Username</label>
+        <input id="auth-username" class="form-control" name="username" autocomplete="username" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="auth-password">Password</label>
+        <input id="auth-password" class="form-control" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <p id="auth-error" class="auth-error" role="status" aria-live="polite"></p>
+      <button id="auth-submit" class="btn btn-primary auth-submit" type="submit">Sign in</button>
+    </form>
+  </section>
+</div>
+
 <!-- TOAST CONTAINER -->
 <div id="toast-container"></div>
 
@@ -783,6 +818,9 @@ var _libDebounce = null;
 var queueRefreshTimer = null;
 var rightsCreatorId = null;
 var rightsAgreements = [];
+var authEnabled = false;
+var dashboardStarted = false;
+var overviewRefreshTimer = null;
 
 // ===== UTILS =====
 function fmt(n){ return n != null ? Number(n).toLocaleString() : '—'; }
@@ -835,11 +873,103 @@ function showToast(msg, type, dur){
   setTimeout(function(){ t.remove(); }, dur);
 }
 
+// ===== AUTHENTICATION =====
+function setDashboardLocked(locked){
+  ['header','layout'].forEach(function(id){
+    var element=document.getElementById(id);
+    if(element){ element.inert=locked; element.setAttribute('aria-hidden',String(locked)); }
+  });
+}
+function stopDashboard(){
+  dashboardStarted=false;
+  if(sseSource){ sseSource.close(); sseSource=null; }
+  if(overviewRefreshTimer){ clearInterval(overviewRefreshTimer); overviewRefreshTimer=null; }
+  if(queueRefreshTimer){ clearInterval(queueRefreshTimer); queueRefreshTimer=null; }
+  if(typeof monitorTimer!=='undefined'&&monitorTimer){ clearInterval(monitorTimer); monitorTimer=null; }
+}
+function showAuthGate(message){
+  var gate=document.getElementById('auth-gate');
+  var error=document.getElementById('auth-error');
+  if(message) error.textContent=message;
+  gate.hidden=false;
+  gate.setAttribute('aria-hidden','false');
+  setDashboardLocked(true);
+  stopDashboard();
+  window.setTimeout(function(){ document.getElementById('auth-username').focus(); },0);
+}
+function hideAuthGate(){
+  var gate=document.getElementById('auth-gate');
+  gate.hidden=true;
+  gate.setAttribute('aria-hidden','true');
+  document.getElementById('auth-error').textContent='';
+  setDashboardLocked(false);
+}
+function startDashboard(){
+  if(dashboardStarted) return;
+  dashboardStarted=true;
+  fetchOverview();
+  initSSE();
+  overviewRefreshTimer=setInterval(fetchOverview,10000);
+}
+async function checkDashboardAuth(){
+  try{
+    var response=await fetch('/api/auth/status',{credentials:'same-origin',cache:'no-store'});
+    if(!response.ok) throw new Error('The dashboard API did not respond.');
+    var state=await response.json();
+    authEnabled=state.auth_enabled===true;
+    document.getElementById('auth-form').hidden=false;
+    document.getElementById('auth-lock-button').hidden=!authEnabled;
+    if(authEnabled&&!state.authenticated){ showAuthGate(); return; }
+    hideAuthGate();
+    startDashboard();
+  }catch(error){
+    authEnabled=true;
+    document.getElementById('auth-form').hidden=true;
+    document.getElementById('auth-lock-button').hidden=true;
+    showAuthGate('The private API is not reachable here. Open the dashboard through its Tailscale URL, or use localhost:8000 on the laptop.');
+  }
+}
+async function loginDashboard(event){
+  event.preventDefault();
+  var button=document.getElementById('auth-submit');
+  var error=document.getElementById('auth-error');
+  button.disabled=true;
+  error.textContent='';
+  try{
+    var response=await fetch('/api/auth/login',{
+      method:'POST',
+      credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        username:document.getElementById('auth-username').value.trim(),
+        password:document.getElementById('auth-password').value
+      })
+    });
+    var payload=await response.json().catch(function(){ return {}; });
+    if(!response.ok) throw new Error(payload.detail||'Sign-in failed.');
+    authEnabled=true;
+    document.getElementById('auth-lock-button').hidden=false;
+    document.getElementById('auth-password').value='';
+    hideAuthGate();
+    startDashboard();
+  }catch(errorValue){
+    error.textContent=errorValue.message||'Could not sign in.';
+    document.getElementById('auth-password').focus();
+  }finally{
+    button.disabled=false;
+  }
+}
+async function logoutDashboard(){
+  try{ await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'}); }
+  catch(error){ /* Local lock remains effective if the backend is unreachable. */ }
+  showAuthGate('You are signed out.');
+}
+
 // ===== API HELPER =====
 async function api(path, opts){
   opts = opts||{};
   try{
-    var fetchOpts={method:opts.method||'GET'};
+    var fetchOpts={method:opts.method||'GET',credentials:'same-origin'};
     if(opts.body && !(opts.body instanceof FormData)){
       fetchOpts.headers={'Content-Type':'application/json'};
       fetchOpts.body=JSON.stringify(opts.body);
@@ -847,6 +977,7 @@ async function api(path, opts){
       fetchOpts.body=opts.body;
     }
     var r=await fetch(path,fetchOpts);
+    if(r.status===401 && authEnabled && !path.startsWith('/api/auth/')) showAuthGate('Your session expired. Sign in again.');
     if(!r.ok){
       var txt=await r.text().catch(function(){ return r.statusText; });
       var message=txt||'HTTP '+r.status;
@@ -918,7 +1049,7 @@ function initSSE(){
   try{
     sseSource=new EventSource('/api/events');
     sseSource.onopen=function(){ dot.classList.add('connected'); lbl.textContent='Live'; };
-    sseSource.onerror=function(){ dot.classList.remove('connected'); lbl.textContent='Reconnecting…'; setTimeout(initSSE,5000); };
+    sseSource.onerror=function(){ dot.classList.remove('connected'); lbl.textContent='Reconnecting…'; if(dashboardStarted) setTimeout(initSSE,5000); };
     sseSource.onmessage=function(e){ try{ handleSSE(JSON.parse(e.data)); }catch(err){} };
     ['job_update','log_line','overview_update','clip_update'].forEach(function(type){
       sseSource.addEventListener(type,function(e){ try{ var d=JSON.parse(e.data); d.type=type; handleSSE(d); }catch(err){} });
@@ -1746,9 +1877,8 @@ async function loadAnalytics(){
 
 // ===== INIT =====
 window.addEventListener('DOMContentLoaded',function(){
-  fetchOverview();
-  initSSE();
-  setInterval(fetchOverview,10000);
+  document.getElementById('auth-form').addEventListener('submit',loginDashboard);
+  checkDashboardAuth();
 });
 </script>
 </body>
