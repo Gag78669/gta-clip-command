@@ -39,8 +39,8 @@ def main():
         settings.api_host,
         settings.api_port,
     )
-    logger.info("For private tailnet access, run: tailscale serve --bg %s", settings.api_port)
-    logger.info("Use `tailscale serve status` to view the private dashboard URL.")
+    logger.info("To connect the hosted frontend, run connect_backend_tailscale.bat once and copy its private HTTPS address into Settings.")
+    logger.info("Tailscale Serve keeps that private address configured across computer restarts.")
     uvicorn.run(
         "src.dashboard.api:app",
         host=settings.api_host,
@@ -52,3 +52,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

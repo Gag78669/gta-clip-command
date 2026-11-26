@@ -632,7 +632,13 @@ textarea.form-control{resize:vertical;min-height:80px}
     <!-- ===== SETTINGS ===== -->
     <div id="section-settings" class="section">
       <div class="section-title">⚙️ Settings</div>
-      <div class="section-sub">Choose local or hosted AI models and configure an OpenAI-compatible API endpoint.</div>
+      <div class="section-sub">Connect the hosted interface to your private local backend and configure your AI providers.</div>
+      <div class="card" style="max-width:900px">
+        <div class="card-title"><span class="dot" style="background:var(--cyan)"></span> Local Backend Connection</div>
+        <div style="font-size:12px;color:var(--text-dim);line-height:1.7;margin:-6px 0 14px">Your video files and processing stay on your computer. Save your private Tailscale Serve HTTPS address here; it will be remembered in this browser after restarts. Start the dashboard on your computer and keep Tailscale connected.</div>
+        <div class="form-group"><label class="form-label" for="backend-url-input">Backend HTTPS address</label><input class="form-control" id="backend-url-input" type="url" placeholder="https://your-computer.your-tailnet.ts.net" autocomplete="url" spellcheck="false"></div>
+        <div class="flex gap-3" style="flex-wrap:wrap;align-items:center"><button class="btn btn-primary" onclick="saveBackendConnection()">🔌 Test &amp; Connect</button><button class="btn btn-ghost" onclick="disconnectBackend()">Disconnect</button><span id="backend-connection-status" role="status" aria-live="polite" style="font-size:12px;color:var(--text-dim)">Not connected</span></div>
+      </div>
       <div class="card" style="max-width:900px">
         <div class="card-title"><span class="dot"></span> AI Providers</div>
         <div class="row" style="gap:16px;flex-wrap:wrap">
@@ -789,6 +795,13 @@ textarea.form-control{resize:vertical;min-height:80px}
   </div>
 </div>
 
+<!-- LOCAL BACKEND CONNECTION GATE -->
+<div id="backend-gate" role="dialog" aria-modal="true" aria-labelledby="backend-gate-title" aria-hidden="true" hidden style="position:fixed;inset:0;z-index:1100;display:none;place-items:center;padding:24px;background:rgba(5,6,12,.96);backdrop-filter:blur(12px)">
+  <section class="auth-panel"><div class="auth-eyebrow">Private local processing</div><h1 id="backend-gate-title" class="auth-title">Connect your backend</h1><p class="auth-copy">Enter your computer’s Tailscale HTTPS address. It is saved in this browser and reconnects after the dashboard or browser restarts.</p>
+    <form id="backend-connect-form" class="auth-form"><div class="form-group"><label class="form-label" for="backend-gate-url">Backend HTTPS address</label><input id="backend-gate-url" class="form-control" type="url" placeholder="https://your-computer.your-tailnet.ts.net" autocomplete="url" spellcheck="false" required></div><p id="backend-gate-error" class="auth-error" role="status" aria-live="polite"></p><button id="backend-gate-submit" class="btn btn-primary auth-submit" type="submit">Test &amp; Connect</button></form>
+  </section>
+</div>
+
 <!-- SINGLE-OWNER LOGIN GATE -->
 <div id="auth-gate" role="dialog" aria-modal="true" aria-labelledby="auth-title" aria-hidden="true" hidden>
   <section class="auth-panel">
@@ -828,6 +841,9 @@ var rightsAgreements = [];
 var authEnabled = false;
 var dashboardStarted = false;
 var overviewRefreshTimer = null;
+var BACKEND_URL_KEY = 'gta_clip_backend_url';
+var backendConnected = false;
+var backendHealthTimer = null;
 
 // ===== UTILS =====
 function fmt(n){ return n != null ? Number(n).toLocaleString() : '—'; }
@@ -891,6 +907,7 @@ function stopDashboard(){
   dashboardStarted=false;
   if(sseSource){ sseSource.close(); sseSource=null; }
   if(overviewRefreshTimer){ clearInterval(overviewRefreshTimer); overviewRefreshTimer=null; }
+  if(backendHealthTimer){ clearInterval(backendHealthTimer); backendHealthTimer=null; }
   if(queueRefreshTimer){ clearInterval(queueRefreshTimer); queueRefreshTimer=null; }
   if(typeof monitorTimer!=='undefined'&&monitorTimer){ clearInterval(monitorTimer); monitorTimer=null; }
 }
@@ -917,23 +934,115 @@ function startDashboard(){
   fetchOverview();
   initSSE();
   overviewRefreshTimer=setInterval(fetchOverview,10000);
+  if(backendHealthTimer)clearInterval(backendHealthTimer);
+  backendHealthTimer=setInterval(async function(){
+    if(!backendConnected)return;
+    try{
+      var response=await fetch(backendApiUrl('/healthz'),{mode:'cors',credentials:'include',cache:'no-store'});
+      if(!response.ok)throw new Error('offline');
+    }catch(error){
+      backendConnected=false;
+      var status=document.getElementById('backend-connection-status');status.textContent='Backend offline · reconnecting…';status.style.color='var(--yellow)';
+      showBackendGate('The local backend went offline. Start or restart it on your computer, then reconnect here.');
+    }
+  },15000);
+}
+function normalizeBackendUrl(value){
+  var parsed;
+  try{parsed=new URL(String(value||'').trim());}catch(e){throw new Error('Enter a valid backend address.');}
+  if(parsed.protocol!=='https:' && !['localhost','127.0.0.1'].includes(parsed.hostname)) throw new Error('Use the private HTTPS address shown by Tailscale Serve.');
+  if(parsed.username||parsed.password||parsed.search||parsed.hash) throw new Error('Enter only the backend address, without a username, password, query, or fragment.');
+  return parsed.origin+parsed.pathname.replace(/\/$/,'');
+}
+function backendBaseUrl(){
+  var saved=localStorage.getItem(BACKEND_URL_KEY);
+  if(saved) return saved.replace(/\/$/,'');
+  if(['localhost','127.0.0.1'].includes(location.hostname)) return location.origin;
+  return '';
+}
+function backendApiUrl(path){
+  var base=backendBaseUrl();
+  if(!base) throw new Error('Connect your local backend in Settings first.');
+  return base+(path.charAt(0)==='/'?path:'/'+path);
+}
+function backendAssetUrl(path){
+  if(!path) return path;
+  if(/^https?:\/\//i.test(path)) return path;
+  return backendApiUrl(path);
+}
+function showBackendGate(message){
+  var gate=document.getElementById('backend-gate');
+  document.getElementById('backend-gate-error').textContent=message||'';
+  gate.hidden=false;gate.style.display='grid';setDashboardLocked(true);stopDashboard();
+  document.getElementById('backend-gate-url').value=backendBaseUrl()||'';
+}
+function hideBackendGate(){
+  var gate=document.getElementById('backend-gate');gate.hidden=true;gate.style.display='none';
+  document.getElementById('backend-gate-error').textContent='';setDashboardLocked(false);
+}
+async function probeBackend(value){
+  var normalized=normalizeBackendUrl(value),controller=new AbortController();
+  var timeout=setTimeout(function(){controller.abort();},7000);
+  try{
+    var response=await fetch(normalized+'/healthz',{mode:'cors',credentials:'include',cache:'no-store',signal:controller.signal});
+    if(!response.ok) throw new Error('The backend answered with HTTP '+response.status+'.');
+    var payload=await response.json();
+    if(payload.status!=='ok') throw new Error('That address is not a GTA Clip Command backend.');
+    return normalized;
+  }catch(error){
+    if(error.name==='AbortError') throw new Error('Timed out. Make sure the dashboard is running and Tailscale is connected.');
+    if(error instanceof TypeError) throw new Error('Could not reach that address. Check the URL, Tailscale connection, and backend CORS setting.');
+    throw error;
+  }finally{clearTimeout(timeout);}
+}
+async function connectBackend(value,gateMode){
+  var status=document.getElementById('backend-connection-status'),error=document.getElementById('backend-gate-error'),button=document.getElementById('backend-gate-submit');
+  if(gateMode){button.disabled=true;button.textContent='Connecting…';error.textContent='';}
+  else{status.textContent='Checking backend…';status.style.color='var(--yellow)';}
+  try{
+    var normalized=await probeBackend(value);
+    localStorage.setItem(BACKEND_URL_KEY,normalized);backendConnected=true;
+    document.getElementById('backend-url-input').value=normalized;
+    status.textContent='Connected · '+normalized;status.style.color='var(--green)';
+    hideBackendGate();await checkDashboardAuth();return true;
+  }catch(err){
+    backendConnected=false;
+    if(gateMode)error.textContent=err.message;
+    else{status.textContent=err.message;status.style.color='var(--red)';showToast('Backend connection failed: '+err.message,'error');}
+    return false;
+  }finally{if(gateMode){button.disabled=false;button.textContent='Test & Connect';}}
+}
+function saveBackendConnection(){connectBackend(document.getElementById('backend-url-input').value,false);}
+function disconnectBackend(){
+  localStorage.removeItem(BACKEND_URL_KEY);backendConnected=false;stopDashboard();
+  document.getElementById('backend-url-input').value='';
+  var status=document.getElementById('backend-connection-status');status.textContent='Disconnected';status.style.color='var(--text-dim)';
+  showBackendGate('Backend disconnected. Connect again whenever you are ready.');
 }
 async function checkDashboardAuth(){
+  var base=backendBaseUrl();
+  if(!base){backendConnected=false;showBackendGate('Connect your computer to load its dashboard.');return;}
+  var connectionStatus=document.getElementById('backend-connection-status');
   try{
-    var response=await fetch('/api/auth/status',{credentials:'same-origin',cache:'no-store'});
+    var response=await fetch(backendApiUrl('/api/auth/status'),{credentials:'include',mode:'cors',cache:'no-store'});
     if(!response.ok) throw new Error('The dashboard API did not respond.');
     var state=await response.json();
     authEnabled=state.auth_enabled===true;
+    backendConnected=true;
+    if(connectionStatus){connectionStatus.textContent='Connected · '+base;connectionStatus.style.color='var(--green)';}
+    var urlField=document.getElementById('backend-url-input');if(urlField)urlField.value=base;
     document.getElementById('auth-form').hidden=false;
     document.getElementById('auth-lock-button').hidden=!authEnabled;
     if(authEnabled&&!state.authenticated){ showAuthGate(); return; }
     hideAuthGate();
     startDashboard();
   }catch(error){
+    backendConnected=false;
     authEnabled=true;
     document.getElementById('auth-form').hidden=true;
     document.getElementById('auth-lock-button').hidden=true;
-    showAuthGate('The private API is not reachable here. Open the dashboard through its Tailscale URL, or use localhost:8000 on the laptop.');
+    if(connectionStatus){connectionStatus.textContent='Backend offline · reconnecting…';connectionStatus.style.color='var(--yellow)';}
+    showBackendGate('Backend is offline. Start the dashboard on your computer, then press Test & Connect to retry.');
   }
 }
 async function loginDashboard(event){
@@ -943,9 +1052,9 @@ async function loginDashboard(event){
   button.disabled=true;
   error.textContent='';
   try{
-    var response=await fetch('/api/auth/login',{
+    var response=await fetch(backendApiUrl('/api/auth/login'),{
       method:'POST',
-      credentials:'same-origin',
+      credentials:'include',mode:'cors',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         username:document.getElementById('auth-username').value.trim(),
@@ -967,7 +1076,7 @@ async function loginDashboard(event){
   }
 }
 async function logoutDashboard(){
-  try{ await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'}); }
+  try{ await fetch(backendApiUrl('/api/auth/logout'),{method:'POST',credentials:'include',mode:'cors'}); }
   catch(error){ /* Local lock remains effective if the backend is unreachable. */ }
   showAuthGate('You are signed out.');
 }
@@ -976,14 +1085,14 @@ async function logoutDashboard(){
 async function api(path, opts){
   opts = opts||{};
   try{
-    var fetchOpts={method:opts.method||'GET',credentials:'same-origin'};
+    var fetchOpts={method:opts.method||'GET',credentials:'include',mode:'cors'};
     if(opts.body && !(opts.body instanceof FormData)){
       fetchOpts.headers={'Content-Type':'application/json'};
       fetchOpts.body=JSON.stringify(opts.body);
     } else if(opts.body){
       fetchOpts.body=opts.body;
     }
-    var r=await fetch(path,fetchOpts);
+    var r=await fetch(backendApiUrl(path),fetchOpts);
     if(r.status===401 && authEnabled && !path.startsWith('/api/auth/')) showAuthGate('Your session expired. Sign in again.');
     if(!r.ok){
       var txt=await r.text().catch(function(){ return r.statusText; });
@@ -1054,7 +1163,7 @@ function initSSE(){
   var dot=document.getElementById('sse-dot');
   var lbl=document.getElementById('sse-label');
   try{
-    sseSource=new EventSource('/api/events');
+    sseSource=new EventSource(backendApiUrl('/api/events'),{withCredentials:true});
     sseSource.onopen=function(){ dot.classList.add('connected'); lbl.textContent='Live'; };
     sseSource.onerror=function(){ dot.classList.remove('connected'); lbl.textContent='Reconnecting…'; if(dashboardStarted) setTimeout(initSSE,5000); };
     sseSource.onmessage=function(e){ try{ handleSSE(JSON.parse(e.data)); }catch(err){} };
@@ -1172,7 +1281,8 @@ function startUpload(){
     }
   };
   xhr.onerror=function(){ btn.disabled=false; showToast('Upload failed: Network error','error'); };
-  xhr.open('POST','/api/upload');
+  xhr.open('POST',backendApiUrl('/api/upload'));
+  xhr.withCredentials=true;
   xhr.send(fd);
 }
 
@@ -1372,12 +1482,12 @@ function renderClipGrid(clips){
   var grid=document.getElementById('clip-grid');
   if(!clips.length){ grid.innerHTML='<div style="grid-column:1/-1" class="empty-state"><div class="empty-state-icon">📭</div><div>No clips found</div></div>'; return; }
   grid.innerHTML=clips.map(function(c){
-    var thumbUrl=c.thumbnail_url||('/thumb/'+c.id);
+    var thumbUrl=backendAssetUrl(c.thumbnail_url||('/thumb/'+c.id));
     var clipStatus=c.status||(c.approval_status==='pending_review'?'pending':c.approval_status)||'pending';
     var clipStatusLabel=clipStatus==='pending'?'Pending Review':clipStatus;
     var clipDuration=c.duration_seconds!=null?c.duration_seconds:c.duration;
     return '<div class="clip-card" onclick="openClipModal(&quot;'+esc(c.id)+'&quot;)">'
-      +'<div class="clip-thumb"><img src="'+esc(thumbUrl)+'" alt="Clip thumbnail" onload="this.nextElementSibling.style.display=\'none\'" onerror="this.style.display=\'none\'">'
+      +'<div class="clip-thumb"><img crossorigin="use-credentials" src="'+esc(thumbUrl)+'" alt="Clip thumbnail" onload="this.nextElementSibling.style.display=\'none\'" onerror="this.style.display=\'none\'">'
       +'<div class="clip-thumb-placeholder">🎬</div></div>'
       +'<div class="clip-info">'
       +'<div class="clip-title" title="'+esc(c.title||'')+'">'
@@ -1405,7 +1515,7 @@ async function openClipModal(id){
     var clipStatusLabel=clipStatus==='pending'?'Pending Review':clipStatus;
     var clipDuration=c.duration_seconds!=null?c.duration_seconds:c.duration;
     document.getElementById('modal-title').textContent=c.title||'Clip Detail';
-    phone.innerHTML='<video controls src="/video/'+id+'" style="width:100%;height:100%;object-fit:cover" onerror="this.outerHTML=\'<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:32px&quot;>🎬</div>\'"></video>';
+    phone.innerHTML='<video controls crossorigin="use-credentials" src="'+esc(backendAssetUrl('/video/'+id))+'" style="width:100%;height:100%;object-fit:cover" onerror="this.outerHTML=\'<div style=&quot;display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);font-size:32px&quot;>🎬</div>\'"></video>';
     details.innerHTML='<div>'
       +'<div class="form-group"><div class="form-label">Title</div><div style="font-size:15px;font-weight:600">'+esc(c.title||'—')+'</div></div>'
       +(c.hook_text?'<div class="form-group"><div class="form-label">Hook</div><div>'+esc(c.hook_text)+'</div></div>':'')
@@ -1493,7 +1603,7 @@ function renderReviewPanel(c){
   var panel=document.getElementById('review-panel');
   panel.innerHTML='<div class="row" style="gap:24px;flex-wrap:wrap">'
     +'<div><div class="phone-mockup">'
-    +'<video controls src="/video/'+c.id+'" style="width:100%;height:100%;object-fit:cover"></video>'
+    +'<video controls crossorigin="use-credentials" src="'+esc(backendAssetUrl(c.video_url||('/video/'+c.id)))+'" style="width:100%;height:100%;object-fit:cover"></video>'
     +'</div></div>'
     +'<div style="flex:1;min-width:200px">'
     +'<div class="form-group"><label class="form-label">Title</label><input type="text" class="form-control" id="rv-title" value="'+esc(c.title||'')+'"></div>'
@@ -1671,7 +1781,7 @@ function renderRightsAgreements(){
       +(status==='active'?'<button class="btn btn-red btn-sm" onclick="revokeRightsAgreement(&quot;'+esc(a.id)+'&quot;)">Revoke</button>':'')+'</div></div>'
       +'<div style="font-size:11px;color:var(--text-dim);margin-top:7px">Authorized by '+esc(a.authorized_by||'—')+' · Valid through '+esc(expiry)+' · Revenue share '+Number(a.rev_share_percent||0)+'%</div>'
       +(a.notes?'<div style="font-size:11px;color:var(--text-dim);margin-top:5px">'+esc(a.notes)+'</div>':'')
-      +(a.document_url?'<a href="'+esc(a.document_url)+'" target="_blank" rel="noopener" style="display:inline-block;font-size:11px;margin-top:6px">📄 '+esc(a.documentation_name||'View permission document')+'</a>':'<div style="font-size:11px;color:var(--red);margin-top:6px">Permission document unavailable</div>')
+      +(a.document_url?'<a href="'+esc(backendAssetUrl(a.document_url))+'" target="_blank" rel="noopener" style="display:inline-block;font-size:11px;margin-top:6px">📄 '+esc(a.documentation_name||'View permission document')+'</a>':'<div style="font-size:11px;color:var(--red);margin-top:6px">Permission document unavailable</div>')
       +'</div>';
   }).join('');
 }
@@ -1906,8 +2016,15 @@ async function loadAnalytics(){
 // ===== INIT =====
 window.addEventListener('DOMContentLoaded',function(){
   document.getElementById('auth-form').addEventListener('submit',loginDashboard);
+  document.getElementById('backend-connect-form').addEventListener('submit',function(event){event.preventDefault();connectBackend(document.getElementById('backend-gate-url').value,true);});
+  var backendInput=document.getElementById('backend-url-input');if(backendInput)backendInput.value=backendBaseUrl();
+  if(backendBaseUrl()){
+    document.getElementById('backend-connection-status').textContent='Saved · reconnecting…';
+    document.getElementById('backend-connection-status').style.color='var(--yellow)';
+  }
   checkDashboardAuth();
 });
 </script>
 </body>
 </html>
+

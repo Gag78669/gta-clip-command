@@ -21,6 +21,7 @@ import httpx
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Request, Response
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
@@ -53,9 +54,30 @@ async def app_lifespan(_: FastAPI):
 
 app = FastAPI(title="GTA CLIP COMMAND API", version="2.0.0", lifespan=app_lifespan)
 
+ALLOWED_BROWSER_ORIGINS = {
+    origin.strip().rstrip("/")
+    for origin in settings.backend_cors_origins.split(",")
+    if origin.strip()
+}
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=sorted(ALLOWED_BROWSER_ORIGINS),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+)
+
 
 @app.middleware("http")
 async def single_owner_auth(request: Request, call_next):
+    request_origin = request.headers.get("origin")
+    if (
+        request_origin
+        and request.method not in {"GET", "HEAD", "OPTIONS"}
+        and request_origin.rstrip("/") not in ALLOWED_BROWSER_ORIGINS
+    ):
+        return JSONResponse({"detail": "This website is not allowed to control the local dashboard."}, status_code=403)
+
     auth_settings = get_auth_settings()
     public_paths = {"/healthz", "/api/auth/status", "/api/auth/login", "/api/auth/logout"}
     protected_path = (
@@ -317,7 +339,7 @@ def auth_login(payload: DashboardLoginRequest, response: Response):
         max_age=SESSION_TTL_SECONDS,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",
         path="/",
     )
     response.headers["Cache-Control"] = "no-store"
@@ -330,7 +352,7 @@ def auth_logout(response: Response):
         key=SESSION_COOKIE_NAME,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",
         path="/",
     )
     response.headers["Cache-Control"] = "no-store"
@@ -1528,3 +1550,4 @@ def get_analytics(db: Session = Depends(get_db)):
         "by_creator": by_creator,
         "delivery_by_platform": delivery_by_platform,
     }
+

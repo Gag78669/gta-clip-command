@@ -90,6 +90,12 @@ python scripts/start_dashboard.py
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The dashboard can also upload videos, manage creators, queue jobs, review clips, and approve or reject results.
 
+### Connect the Vercel website to this computer
+
+The Vercel frontend can use this computer as its private processing backend. The laptop must be on, Tailscale connected, and the dashboard running. Install and sign in to Tailscale on the computer and any device you use to open the site. Run `connect_backend_tailscale.bat` once to create a private HTTPS address; Tailscale Serve's `--bg` setting resumes after computer or Tailscale restarts. Copy its `https://...ts.net` address into **Settings → Local Backend Connection → Backend HTTPS address** on the Vercel site, then choose **Test & Connect**. The frontend remembers the address in this browser, checks the backend when it loads, and prompts you to reconnect if the local service is offline.
+
+The backend accepts browser requests only from the configured origins in `BACKEND_CORS_ORIGINS`. Keep this list limited to the Vercel domains you use. The API uses the dashboard's owner login. Do not enable Tailscale Funnel or otherwise publish the backend to the public internet. This is a single-user setup; do not share the Vercel site or backend address with other users.
+
 ### Queue, monitor, and review workflow
 
 - **Queue** shows saved job status, current pipeline stage, progress, candidate count, and produced clips. Start queued jobs, pause/resume or cancel active jobs, retry failed or cancelled jobs, and remove eligible jobs.
@@ -130,3 +136,4 @@ src/qa/                    Export validation
 src/dashboard/             FastAPI application and browser UI
 tests/                     Automated tests
 ```
+

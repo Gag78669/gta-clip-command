@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     # API Server
     api_host: str = "127.0.0.1"
     api_port: int = 8000
+    # Exact browser origins allowed to call the local API from the hosted frontend.
+    backend_cors_origins: str = "https://gta-clip-command.vercel.app,https://v0-gta-clip-command-nologin.vercel.app,http://127.0.0.1:8000,http://localhost:8000"
 
     def ensure_directories(self) -> None:
         """Create all required working and storage directories if they do not exist."""
@@ -108,3 +110,4 @@ def get_settings() -> Settings:
     settings = Settings()
     settings.ensure_directories()
     return settings
+
